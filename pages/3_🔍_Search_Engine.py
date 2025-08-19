@@ -25,7 +25,7 @@ except Exception:
 st.set_page_config(page_title="Search Engine", layout="wide")
 st.title("Search Engine")
 
-# ---------- Helpers ----------
+
 def get_col(df: pd.DataFrame, candidates: List[str]):
     for c in candidates:
         if c in df.columns:
@@ -179,7 +179,7 @@ def parse_revenue_text(s: str) -> Tuple[float, float]:
         return val, val
     return np.nan, np.nan
 
-# ---------- Load both datasets ----------
+
 df_companies = load_or_upload("companies.xlsx", "companies.xlsx")
 df_kerix = load_or_upload("kerix.xlsx", "kerix.xlsx")
 
@@ -187,7 +187,7 @@ if df_companies is None and df_kerix is None:
     st.error("Au moins une des bases (companies.xlsx ou kerix.xlsx) doit être fournie.")
     st.stop()
 
-# ---------- Prepare dataframes ----------
+
 def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFrame, dict]:
     df = df.copy()
     info = {}
@@ -268,35 +268,23 @@ elif len(all_maxs) > 0:
 else:
     global_min, global_max = 0.0, 10_000_000.0
 
-# ---------- Global filters ----------
-st.subheader("Filtres")
 
-seed_source = st.radio("Source de la société cible", ["Base totale", "Kerix", "Manuelle"], index=0, horizontal=True)
+st.subheader("Filtres")
 
 seed_row = None
 seed_name_for_exclusion = None
 
-if seed_source == "Base totale":
-    if df_companies_prepared is None:
-        st.warning("Base totale non disponible - choisissez Kerix ou Manuelle.")
-    else:
-        options = df_companies_prepared['_display_name'].fillna("N/A").astype(str).tolist()
-        seed_choice_idx = st.selectbox("Choisir la société seed (Base totale)", options=list(range(len(options))),
-                                       format_func=lambda i: options[i])
-        seed_row = df_companies_prepared.iloc[int(seed_choice_idx)]
-        seed_name_for_exclusion = seed_row.get('_display_name', "")
-
-elif seed_source == "Kerix":
-    if df_kerix_prepared is None:
-        st.warning("Kerix non disponible - choisissez Base totale ou Manuelle.")
-    else:
-        options = df_kerix_prepared['_display_name'].fillna("N/A").astype(str).tolist()
-        seed_choice_idx = st.selectbox("Choisir la société seed (Kerix)", options=list(range(len(options))),
-                                       format_func=lambda i: options[i])
-        seed_row = df_kerix_prepared.iloc[int(seed_choice_idx)]
-        seed_name_for_exclusion = seed_row.get('_display_name', "")
-
+if df_kerix_prepared is None:
+    st.warning("Kerix non disponible - choisissez Base totale ou Manuelle.")
 else:
+    options = df_kerix_prepared['_display_name'].fillna("N/A").astype(str).tolist()
+    seed_choice_idx = st.selectbox("Choisir la société seed (Kerix)", options=list(range(len(options))),
+                                    format_func=lambda i: options[i])
+    seed_row = df_kerix_prepared.iloc[int(seed_choice_idx)]
+    seed_name_for_exclusion = seed_row.get('_display_name', "")
+
+non_existant = st.checkbox("Entreprise non existante dans la base", False)
+if non_existant:
     with st.form("manual_seed_form_global"):
         ms_name = st.text_input("Nom de la société (seed)")
         ms_activities = st.text_area("Activités Principales (séparez par , ; / )")
@@ -320,14 +308,14 @@ approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
 approx_step = max(1.0, approx_step)
 
 ca_min_sel, ca_max_sel = st.slider(
-    "Fourchette CA (Dhs)",
+    "Min - Max CA (Dhs)",
     min_value=float(min_val),
     max_value=float(max_val),
     value=(float(min_val), float(max_val)),
     step=float(approx_step)
 )
 
-st.markdown(f"Fourchette sélectionnée : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
+st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
 
 if seed_row is None:
     st.warning("Sélectionnez ou créez une société seed pour lancer les recherches.")
@@ -352,7 +340,7 @@ def extract_seed_tokens(seed_series):
 
 seed_acts, seed_prods = extract_seed_tokens(seed_row)
 
-# ---------- Tabs ----------
+
 tabs = st.tabs(["Base totale", "Kerix", "Paramètres"])
 
 with tabs[2]:
@@ -423,7 +411,7 @@ def compute_matches_for_df(df, label):
     display_cols.append('_CA_display')
     return candidates, display_cols
 
-# ---------- Base totale tab ----------
+
 with tabs[0]:
     st.header("Onglet: Base totale (companies.xlsx)")
     if df_companies_prepared is None:
@@ -453,7 +441,7 @@ with tabs[0]:
             out.seek(0)
             st.download_button("📥 Télécharger résultats (Base totale)", data=out, file_name="base_totale_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ---------- Kerix tab ----------
+
 with tabs[1]:
     st.header("Onglet: Kerix (kerix.xlsx)")
     if df_kerix_prepared is None:

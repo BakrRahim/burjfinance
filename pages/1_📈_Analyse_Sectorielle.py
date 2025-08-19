@@ -127,63 +127,216 @@ def calculate_cagr(start, end, periods):
 selected_sector = st.selectbox("Choisir un secteur à visualiser:", sorted(df['Secteur'].unique()))
 filtered_df = df[df['Secteur'] == selected_sector]
 
+# variables = {
+#     "Chiffre d'affaires": [f"Chiffre d'affaires {y} (Dhs)" for y in range(2020, 2024)],
+#     "Resultat d'exploitation": [f"Resultat d'exploitation {y} (Dhs)" for y in range(2020, 2024)],
+#     "Charges personnel": [f"Charges personnel {y}" for y in range(2020, 2024)]
+# }
+
+# for var_name, cols in variables.items():
+#     sector_yearly = filtered_df[cols].sum().reset_index()
+#     sector_yearly.columns = ["Année", var_name]
+#     sector_yearly["Année"] = sector_yearly["Année"].str.extract(r'(\d{4})').astype(int)
+
+#     start_value = sector_yearly[var_name].iloc[0]
+#     end_value = sector_yearly[var_name].iloc[-1]
+#     n_years = sector_yearly["Année"].iloc[-1] - sector_yearly["Année"].iloc[0]
+#     cagr = ((end_value / start_value) ** (1 / n_years) - 1) if start_value != 0 else 0
+#     cagr_text = f"CAGR: {cagr*100:.2f}%"
+
+#     fig = go.Figure()
+#     fig.add_trace(go.Bar(
+#         x=sector_yearly["Année"],
+#         y=sector_yearly[var_name],
+#         name=f"{var_name} Total",
+#         text=[f"{y/1e9:.2f} B Dhs" for y in sector_yearly[var_name]],
+#         textposition="outside"
+#     ))
+
+#     sector_yearly["Variation"] = sector_yearly[var_name].pct_change()
+#     fig.add_trace(go.Scatter(
+#         x=sector_yearly["Année"],
+#         y=sector_yearly[var_name],
+#         mode="lines+markers+text",
+#         name="Variation",
+#         text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in sector_yearly["Variation"]],
+#         textposition="bottom center",
+#         line=dict(dash="dot")
+#     ))
+
+#     fig.add_annotation(
+#         text=cagr_text,
+#         xref="paper", yref="paper",
+#         x=0.5, y=1.15,
+#         showarrow=False,
+#         font=dict(size=16, color="black", family="Arial Black"),
+#         bgcolor="rgba(255,255,255,0.8)",
+#         bordercolor="black",
+#         borderwidth=1,
+#         borderpad=4,
+#     )
+
+#     fig.update_layout(
+#         title=f"Évolution de {var_name} pour {selected_sector}",
+#         yaxis_title=var_name,
+#         xaxis_title="Année",
+#         margin=dict(t=100)
+#     )
+
+#     st.plotly_chart(fig)
+
 variables = {
     "Chiffre d'affaires": [f"Chiffre d'affaires {y} (Dhs)" for y in range(2020, 2024)],
     "Resultat d'exploitation": [f"Resultat d'exploitation {y} (Dhs)" for y in range(2020, 2024)],
     "Charges personnel": [f"Charges personnel {y}" for y in range(2020, 2024)]
 }
 
-for var_name, cols in variables.items():
-    sector_yearly = filtered_df[cols].sum().reset_index()
-    sector_yearly.columns = ["Année", var_name]
-    sector_yearly["Année"] = sector_yearly["Année"].str.extract(r'(\d{4})').astype(int)
 
-    start_value = sector_yearly[var_name].iloc[0]
-    end_value = sector_yearly[var_name].iloc[-1]
-    n_years = sector_yearly["Année"].iloc[-1] - sector_yearly["Année"].iloc[0]
-    cagr = ((end_value / start_value) ** (1 / n_years) - 1) if start_value != 0 else 0
-    cagr_text = f"CAGR: {cagr*100:.2f}%"
+ca_cols = variables["Chiffre d'affaires"]
+re_cols = variables["Resultat d'exploitation"]
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=sector_yearly["Année"],
-        y=sector_yearly[var_name],
-        name=f"{var_name} Total",
-        text=[f"{y/1e9:.2f} B Dhs" for y in sector_yearly[var_name]],
-        textposition="outside"
-    ))
 
-    sector_yearly["Variation"] = sector_yearly[var_name].pct_change()
-    fig.add_trace(go.Scatter(
-        x=sector_yearly["Année"],
-        y=sector_yearly[var_name],
-        mode="lines+markers+text",
-        name="Variation",
-        text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in sector_yearly["Variation"]],
-        textposition="bottom center",
-        line=dict(dash="dot")
-    ))
+ca_yearly = filtered_df[ca_cols].sum().reset_index()
+ca_yearly.columns = ["Année", "CA"]
+ca_yearly["Année"] = ca_yearly["Année"].str.extract(r'(\d{4})').astype(int)
 
-    fig.add_annotation(
-        text=cagr_text,
-        xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False,
-        font=dict(size=16, color="black", family="Arial Black"),
-        bgcolor="rgba(255,255,255,0.8)",
-        bordercolor="black",
-        borderwidth=1,
-        borderpad=4,
-    )
+re_yearly = filtered_df[re_cols].sum().reset_index()
+re_yearly.columns = ["Année", "RE"]
+re_yearly["Année"] = re_yearly["Année"].str.extract(r'(\d{4})').astype(int)
 
-    fig.update_layout(
-        title=f"Évolution de {var_name} pour {selected_sector}",
-        yaxis_title=var_name,
-        xaxis_title="Année",
-        margin=dict(t=100)
-    )
 
-    st.plotly_chart(fig)
+merged_df = ca_yearly.merge(re_yearly, on="Année")
+
+
+def compute_cagr(series):
+    start_value, end_value = series.iloc[0], series.iloc[-1]
+    n_years = merged_df["Année"].iloc[-1] - merged_df["Année"].iloc[0]
+    return ((end_value / start_value) ** (1 / n_years) - 1) if start_value != 0 else 0
+
+cagr_ca = compute_cagr(merged_df["CA"])
+cagr_re = compute_cagr(merged_df["RE"])
+
+merged_df["CA_Var"] = merged_df["CA"].pct_change()
+merged_df["RE_Var"] = merged_df["RE"].pct_change()
+
+fig = go.Figure()
+
+fig.add_trace(go.Bar(
+    x=merged_df["Année"],
+    y=merged_df["CA"],
+    name="Chiffre d'affaires (CA)",
+    text=[f"{y/1e9:.2f} B Dhs" for y in merged_df["CA"]],
+    textposition="outside"
+))
+fig.add_trace(go.Bar(
+    x=merged_df["Année"],
+    y=merged_df["RE"],
+    name="Résultat d’exploitation (RE)",
+    text=[f"{y/1e9:.2f} B Dhs" for y in merged_df["RE"]],
+    textposition="outside"
+))
+
+fig.add_trace(go.Scatter(
+    x=merged_df["Année"],
+    y=merged_df["CA"],
+    mode="lines+markers+text",
+    name="Variation CA",
+    text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in merged_df["CA_Var"]],
+    textposition="bottom center",
+    line=dict(dash="dot", color="blue")
+))
+fig.add_trace(go.Scatter(
+    x=merged_df["Année"],
+    y=merged_df["RE"],
+    mode="lines+markers+text",
+    name="Variation RE",
+    text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in merged_df["RE_Var"]],
+    textposition="top center",
+    line=dict(dash="dot", color="red")
+))
+
+
+fig.add_annotation(
+    text=f"CAGR CA: {cagr_ca*100:.2f}%",
+    xref="paper", yref="paper", x=0.25, y=1.15,
+    showarrow=False,
+    font=dict(size=14, color="blue", family="Arial Black"),
+    bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
+    borderwidth=1, borderpad=4,
+)
+fig.add_annotation(
+    text=f"CAGR RE: {cagr_re*100:.2f}%",
+    xref="paper", yref="paper", x=0.75, y=1.15,
+    showarrow=False,
+    font=dict(size=14, color="red", family="Arial Black"),
+    bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
+    borderwidth=1, borderpad=4,
+)
+
+
+fig.update_layout(
+    title=f"Évolution de CA et RE pour {selected_sector}",
+    yaxis_title="Montants (Dhs)",
+    xaxis_title="Année",
+    barmode="group",
+    margin=dict(t=120),
+    legend=dict(orientation="h", y=-0.2)
+)
+
+st.plotly_chart(fig)
+
+
+charges_cols = variables["Charges personnel"]
+charges_yearly = filtered_df[charges_cols].sum().reset_index()
+charges_yearly.columns = ["Année", "Charges"]
+charges_yearly["Année"] = charges_yearly["Année"].str.extract(r'(\d{4})').astype(int)
+
+
+start_value = charges_yearly["Charges"].iloc[0]
+end_value = charges_yearly["Charges"].iloc[-1]
+n_years = charges_yearly["Année"].iloc[-1] - charges_yearly["Année"].iloc[0]
+cagr_charges = ((end_value / start_value) ** (1 / n_years) - 1) if start_value != 0 else 0
+
+
+charges_yearly["Variation"] = charges_yearly["Charges"].pct_change()
+
+
+fig2 = go.Figure()
+fig2.add_trace(go.Bar(
+    x=charges_yearly["Année"],
+    y=charges_yearly["Charges"],
+    name="Charges personnel",
+    text=[f"{y/1e9:.2f} B Dhs" for y in charges_yearly["Charges"]],
+    textposition="outside",
+    width=0.3
+))
+fig2.add_trace(go.Scatter(
+    x=charges_yearly["Année"],
+    y=charges_yearly["Charges"],
+    mode="lines+markers+text",
+    name="Variation",
+    text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in charges_yearly["Variation"]],
+    textposition="bottom center",
+    line=dict(dash="dot")
+))
+
+fig2.add_annotation(
+    text=f"CAGR: {cagr_charges*100:.2f}%",
+    xref="paper", yref="paper", x=0.5, y=1.15,
+    showarrow=False,
+    font=dict(size=16, color="black", family="Arial Black"),
+    bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+    borderwidth=1, borderpad=4,
+)
+
+fig2.update_layout(
+    title=f"Évolution des Charges de personnel pour {selected_sector}",
+    yaxis_title="Charges (Dhs)",
+    xaxis_title="Année",
+    margin=dict(t=100)
+)
+
+st.plotly_chart(fig2)
 
 marge_variables = {
     "Marge EBIT/CA": [f"Marge EBIT/CA {y}" for y in range(2020, 2024)],
@@ -208,7 +361,8 @@ for var_name, cols in marge_variables.items():
         y=sector_yearly[var_name],
         name=f"{var_name} Moyen",
         text=[f"{v*100:.1f}%" for v in sector_yearly[var_name]],
-        textposition="outside"
+        textposition="outside",
+        width=0.3
     ))
 
     sector_yearly["Variation"] = sector_yearly[var_name].pct_change()

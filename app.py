@@ -1,7 +1,6 @@
 import streamlit as st
 from pathlib import Path
 
-# Configuration de la page
 st.set_page_config(
     page_title="BurjFinance - Tableau de Bord",
     page_icon="💼",
