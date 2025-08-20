@@ -100,8 +100,6 @@ fig_treemap = px.treemap(
 )
 
 st.plotly_chart(fig_treemap)
-
-
 fig_pie = px.pie(sector_sum, names='Secteur', values=ca_column, hover_data={ca_column: ":,.0f"},
                  title=f"Répartition CA {selected_year} par Secteur")
 
@@ -116,7 +114,6 @@ fig_pie.update_layout(
 )
 
 st.plotly_chart(fig_pie)
-
 st.header("2. Évolution d'un Secteur Sélectionné avec CAGR")
 def calculate_cagr(start, end, periods):
     try:
@@ -195,7 +192,6 @@ variables = {
 ca_cols = variables["Chiffre d'affaires"]
 re_cols = variables["Resultat d'exploitation"]
 
-
 ca_yearly = filtered_df[ca_cols].sum().reset_index()
 ca_yearly.columns = ["Année", "CA"]
 ca_yearly["Année"] = ca_yearly["Année"].str.extract(r'(\d{4})').astype(int)
@@ -204,9 +200,7 @@ re_yearly = filtered_df[re_cols].sum().reset_index()
 re_yearly.columns = ["Année", "RE"]
 re_yearly["Année"] = re_yearly["Année"].str.extract(r'(\d{4})').astype(int)
 
-
 merged_df = ca_yearly.merge(re_yearly, on="Année")
-
 
 def compute_cagr(series):
     start_value, end_value = series.iloc[0], series.iloc[-1]
@@ -221,7 +215,6 @@ merged_df["RE_Var"] = merged_df["RE"].pct_change()
 
 fig = go.Figure()
 
-# CA bars (left axis)
 fig.add_trace(go.Bar(
     x=merged_df["Année"],
     y=merged_df["CA"],
@@ -233,7 +226,6 @@ fig.add_trace(go.Bar(
     width=0.3
 ))
 
-# RE bars (right axis)
 fig.add_trace(go.Bar(
     x=merged_df["Année"],
     y=merged_df["RE"],
@@ -245,7 +237,6 @@ fig.add_trace(go.Bar(
     width=0.3
 ))
 
-# CA variation line (left axis)
 fig.add_trace(go.Scatter(
     x=merged_df["Année"] - 0.20,
     y=merged_df["CA"],
@@ -257,7 +248,6 @@ fig.add_trace(go.Scatter(
     yaxis="y1"
 ))
 
-# RE variation line (right axis)
 fig.add_trace(go.Scatter(
     x=merged_df["Année"] + 0.20,
     y=merged_df["RE"],
@@ -269,7 +259,6 @@ fig.add_trace(go.Scatter(
     yaxis="y2"
 ))
 
-# Annotations
 fig.add_annotation(
     text=f"CAGR CA: {cagr_ca*100:.2f}%",
     xref="paper", yref="paper", x=0.25, y=1.15,
@@ -287,34 +276,28 @@ fig.add_annotation(
     borderwidth=1, borderpad=4,
 )
 
-# Layout with dual y-axes and grouped bars
 fig.update_layout(
     title=f"Évolution de CA et RE pour {selected_sector}",
     xaxis_title="Année",
     yaxis=dict(title="Montants CA (Dhs)", side="left"),
     yaxis2=dict(title="Montants RE (Dhs)", side="right", overlaying="y"),
-    barmode="group",  # <-- ensures bars are side by side
+    barmode="group",
     margin=dict(t=120),
     legend=dict(orientation="h", y=-0.2)
 )
 
 st.plotly_chart(fig)
-
-
 charges_cols = variables["Charges personnel"]
 charges_yearly = filtered_df[charges_cols].sum().reset_index()
 charges_yearly.columns = ["Année", "Charges"]
 charges_yearly["Année"] = charges_yearly["Année"].str.extract(r'(\d{4})').astype(int)
-
 
 start_value = charges_yearly["Charges"].iloc[0]
 end_value = charges_yearly["Charges"].iloc[-1]
 n_years = charges_yearly["Année"].iloc[-1] - charges_yearly["Année"].iloc[0]
 cagr_charges = ((end_value / start_value) ** (1 / n_years) - 1) if start_value != 0 else 0
 
-
 charges_yearly["Variation"] = charges_yearly["Charges"].pct_change()
-
 
 fig2 = go.Figure()
 fig2.add_trace(go.Bar(
@@ -491,7 +474,6 @@ for var, config in cagr_variables.items():
         st.plotly_chart(fig)
     except Exception as e:
         st.warning(f"Erreur lors du calcul du CAGR pour {var}: {e}")
-
 
 st.header("4. Détail par Secteur")
 selected_sector = st.selectbox("Choisir un secteur:", sorted(df['Secteur'].unique()))

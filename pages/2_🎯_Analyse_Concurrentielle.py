@@ -154,20 +154,16 @@ col3.metric(f"Charges personnel total ({latest})", f"{int(agg_CP_latest):,}".rep
 
 st.write(f"Ratios agrégés ({latest}): EBIT/CA = {ebit_ca_ratio:.2%} - EBIT/CP = {ebit_cp_ratio:.2%} - CP/CA = {cp_ca_ratio:.2%}")
 
-# Fix: compute_company_cagrs now ensures both v0 and vN are > 0 to avoid complex results
 def compute_company_cagrs(df_input, metric_key):
     mat, cols_map = build_metric_matrix(df_input, metric_key)
     cagr_list = []
     for idx, row in mat.iterrows():
         v0 = row[str(YEARS[0])]
         vN = row[str(YEARS[-1])]
-        # require both positive (strictly) to avoid complex roots
         if pd.notna(v0) and pd.notna(vN) and v0 > 0 and vN > 0:
             try:
                 cagr = (vN / v0) ** (1 / (len(YEARS) - 1)) - 1
-                # guard against complex (shouldn't happen now), cast to float
                 if isinstance(cagr, complex):
-                    # ignore complex results
                     continue
                 cagr_list.append(float(cagr))
             except Exception:
@@ -180,7 +176,6 @@ cagr_display = []
 for key in ["CA", "RE", "CP"]:
     cagr_list = compute_company_cagrs(sector_df, key)
     mean_cagr = np.mean(cagr_list) if len(cagr_list) > 0 else np.nan
-    # ensure we have a real float or NaN
     if isinstance(mean_cagr, complex):
         mean_cagr = np.nan
     cagr_results[key] = mean_cagr
@@ -201,7 +196,6 @@ import plotly.graph_objects as go
 
 fig = go.Figure()
 
-# CA bars (left y-axis)
 fig.add_trace(
     go.Bar(
         x=years,
@@ -213,7 +207,6 @@ fig.add_trace(
     )
 )
 
-# RE bars (right y-axis)
 fig.add_trace(
     go.Bar(
         x=years,
@@ -222,11 +215,10 @@ fig.add_trace(
         marker_color="#de2d26",
         width=0.35,
         offsetgroup=2,
-        yaxis="y2"   # <-- assign to second axis
+        yaxis="y2"
     )
 )
 
-# Layout with 2 y-axes
 fig.update_layout(
     title=f"CA moyen vs RE moyen par entreprise - Secteur: {sector_choice}",
     xaxis=dict(title="Année"),
@@ -236,7 +228,7 @@ fig.update_layout(
         overlaying="y",
         side="right"
     ),
-    barmode="group",  # <-- forces side by side
+    barmode="group",
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
 
@@ -249,7 +241,6 @@ for key, label in [("CA", "Chiffre d'affaires"), ("RE", "Résultat d'exploitatio
     if col:
         temp = sector_df[[COMPANY_COL, COMPANY_COL2, col]].copy()
         temp[col] = safe_to_numeric(temp[col]).fillna(0)
-        # Create a unified company column using COMPANY_COL if available, otherwise COMPANY_COL2
         temp['Entreprise'] = temp[COMPANY_COL].combine_first(temp[COMPANY_COL2])
         total = temp[col].sum()
         if total == 0:

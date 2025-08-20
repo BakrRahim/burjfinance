@@ -308,8 +308,6 @@ range_span = max_val - min_val
 approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
 approx_step = max(1.0, approx_step)
 
-
-# --- Number inputs aligned under slider edges ---
 col1, col2 = st.columns([1, 1])
 with col1:
     ca_min_input = st.number_input(
@@ -328,11 +326,8 @@ with col2:
         step=float(approx_step)
     )
 
-# Keep slider and inputs in sync
 ca_min_sel, ca_max_sel = ca_min_input, ca_max_input
-
 st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
-
 if seed_row is None:
     st.warning("Sélectionnez ou créez une société seed pour lancer les recherches.")
     st.stop()
