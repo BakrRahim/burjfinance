@@ -90,7 +90,6 @@ def frac_str(m: int, t: int) -> str:
 def load_or_upload(filename: str, prompt_label: str):
     try:
         df = pd.read_excel(filename)
-        st.success(f"Chargé depuis {filename} - {df.shape[0]} lignes, {df.shape[1]} colonnes.")
         return df
     except Exception:
         uploaded = st.file_uploader(f"Téléversez {prompt_label} (.xlsx) si {filename} absent", type=["xlsx"], key=filename)
@@ -300,20 +299,37 @@ if non_existant:
         })
         seed_name_for_exclusion = ms_name
 
-st.markdown("Filtre CA (Chiffre d'affaires)")
+st.markdown("### Filtre CA (Chiffre d'affaires)")
+
 min_val = max(0.0, global_min)
 max_val = max(min_val + 1.0, global_max)
 range_span = max_val - min_val
+
 approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
 approx_step = max(1.0, approx_step)
 
-ca_min_sel, ca_max_sel = st.slider(
-    "Min - Max CA (Dhs)",
-    min_value=float(min_val),
-    max_value=float(max_val),
-    value=(float(min_val), float(max_val)),
-    step=float(approx_step)
-)
+
+# --- Number inputs aligned under slider edges ---
+col1, col2 = st.columns([1, 1])
+with col1:
+    ca_min_input = st.number_input(
+        "Min (Dhs)", 
+        min_value=float(min_val), 
+        max_value=float(max_val),
+        value=min_val,
+        step=float(approx_step)
+    )
+with col2:
+    ca_max_input = st.number_input(
+        "Max (Dhs)", 
+        min_value=float(ca_min_input), 
+        max_value=float(max_val),
+        value=max_val,
+        step=float(approx_step)
+    )
+
+# Keep slider and inputs in sync
+ca_min_sel, ca_max_sel = ca_min_input, ca_max_input
 
 st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
 
@@ -348,7 +364,7 @@ with tabs[2]:
     act_threshold = st.slider("Seuil similarité activités (fuzzy)", min_value=0.5, max_value=0.95, value=0.75, step=0.01, key="act_threshold")
     prod_threshold = st.slider("Seuil similarité produits/services (fuzzy)", min_value=0.5, max_value=0.95, value=0.75, step=0.01, key="prod_threshold")
     top_n_preview = st.number_input("Top N candidats à afficher", min_value=5, max_value=500, value=25, step=5, key="top_n_preview")
-    sort_metric = st.selectbox("Trier par", ["average_fraction", "product_fraction", "activity_fraction"], index=0, key="sort_metric")
+    sort_metric = st.selectbox("Trier par", ["product_fraction", "activity_fraction", "average_fraction"], index=0, key="sort_metric")
 
 def compute_matches_for_df(df, label):
     if df is None:
@@ -405,7 +421,7 @@ def compute_matches_for_df(df, label):
     display_cols = []
     if '_display_name' in candidates.columns:
         display_cols.append('_display_name')
-    display_cols += ['activity_fraction_str', 'product_fraction_str', 'average_fraction_str']
+    display_cols += ['average_fraction_str']
 
     candidates['_CA_display'] = candidates.apply(lambda r: format_range_compact(r['_revenue_min'], r['_revenue_max']), axis=1)
     display_cols.append('_CA_display')
@@ -413,7 +429,7 @@ def compute_matches_for_df(df, label):
 
 
 with tabs[0]:
-    st.header("Onglet: Base totale (companies.xlsx)")
+    st.header("Onglet: Base totale")
     if df_companies_prepared is None:
         st.warning("Fichier companies.xlsx non chargé.")
     else:
@@ -428,9 +444,7 @@ with tabs[0]:
             st.subheader(f"Top {int(top_n_preview)} candidats - Base totale")
             rename_map = {
                 '_display_name': 'Raison Sociale',
-                'activity_fraction_str': 'Activités',
-                'product_fraction_str': 'Produits/Services',
-                'average_fraction_str': 'Score moyen',
+                'average_fraction_str': 'Matching Score',
                 '_CA_display': "Chiffre d'affaires"
             }
             st.dataframe(candidates.head(int(top_n_preview))[display_cols].fillna("").rename(columns=rename_map))
@@ -443,7 +457,7 @@ with tabs[0]:
 
 
 with tabs[1]:
-    st.header("Onglet: Kerix (kerix.xlsx)")
+    st.header("Onglet: Kerix")
     if df_kerix_prepared is None:
         st.warning("Fichier kerix.xlsx non chargé.")
     else:
@@ -458,9 +472,7 @@ with tabs[1]:
             st.subheader(f"Top {int(top_n_preview)} candidats - Kerix")
             rename_map = {
                 '_display_name': 'Raison Sociale',
-                'activity_fraction_str': 'Activités (similaires / total seed)',
-                'product_fraction_str': 'Produits/Services (similaires / total seed)',
-                'average_fraction_str': 'Score moyen (similaires / total seed)',
+                'average_fraction_str': 'Matching Score',
                 '_CA_display': "Chiffre d'affaires (compact)"
             }
             st.dataframe(candidates_k.head(int(top_n_preview))[display_cols_k].fillna("").rename(columns=rename_map))

@@ -221,41 +221,55 @@ merged_df["RE_Var"] = merged_df["RE"].pct_change()
 
 fig = go.Figure()
 
+# CA bars (left axis)
 fig.add_trace(go.Bar(
     x=merged_df["Année"],
     y=merged_df["CA"],
     name="Chiffre d'affaires (CA)",
     text=[f"{y/1e9:.2f} B Dhs" for y in merged_df["CA"]],
-    textposition="outside"
+    textposition="outside",
+    yaxis="y1",
+    offsetgroup=1,
+    width=0.3
 ))
+
+# RE bars (right axis)
 fig.add_trace(go.Bar(
     x=merged_df["Année"],
     y=merged_df["RE"],
     name="Résultat d’exploitation (RE)",
     text=[f"{y/1e9:.2f} B Dhs" for y in merged_df["RE"]],
-    textposition="outside"
+    textposition="outside",
+    yaxis="y2",
+    offsetgroup=2,
+    width=0.3
 ))
 
+# CA variation line (left axis)
 fig.add_trace(go.Scatter(
-    x=merged_df["Année"],
+    x=merged_df["Année"] - 0.20,
     y=merged_df["CA"],
     mode="lines+markers+text",
     name="Variation CA",
     text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in merged_df["CA_Var"]],
     textposition="bottom center",
-    line=dict(dash="dot", color="blue")
+    line=dict(dash="dot", color="blue"),
+    yaxis="y1"
 ))
+
+# RE variation line (right axis)
 fig.add_trace(go.Scatter(
-    x=merged_df["Année"],
+    x=merged_df["Année"] + 0.20,
     y=merged_df["RE"],
     mode="lines+markers+text",
     name="Variation RE",
     text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in merged_df["RE_Var"]],
     textposition="top center",
-    line=dict(dash="dot", color="red")
+    line=dict(dash="dot", color="red"),
+    yaxis="y2"
 ))
 
-
+# Annotations
 fig.add_annotation(
     text=f"CAGR CA: {cagr_ca*100:.2f}%",
     xref="paper", yref="paper", x=0.25, y=1.15,
@@ -273,12 +287,13 @@ fig.add_annotation(
     borderwidth=1, borderpad=4,
 )
 
-
+# Layout with dual y-axes and grouped bars
 fig.update_layout(
     title=f"Évolution de CA et RE pour {selected_sector}",
-    yaxis_title="Montants (Dhs)",
     xaxis_title="Année",
-    barmode="group",
+    yaxis=dict(title="Montants CA (Dhs)", side="left"),
+    yaxis2=dict(title="Montants RE (Dhs)", side="right", overlaying="y"),
+    barmode="group",  # <-- ensures bars are side by side
     margin=dict(t=120),
     legend=dict(orientation="h", y=-0.2)
 )

@@ -1,275 +1,366 @@
+import os
+import math
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+from difflib import SequenceMatcher
 
-st.set_page_config(
-    page_title="Analyse Concurrentielle",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Analyse Concurrentielle", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
-    body {
-        font-family: 'Segoe UI', sans-serif;
-        background-color: #f5f7fa;
-        color: #333333;
-    }
-    .block-container {
-        padding: 2rem;
-    }
-    h1, h2, h3 {
-        color: #2c3e50;
-    }
-    .stButton > button {
-        border-radius: 10px;
-        padding: 10px 20px;
-        background: linear-gradient(90deg, #2980b9, #6dd5fa);
-        border: none;
-        transition: background 0.3s ease;
-        color: white;
-        font-weight: 600;
-    }
-    .stButton > button:hover {
-        background: linear-gradient(90deg, #6dd5fa, #2980b9);
-    }
-    .stDataFrame, .stPlotlyChart {
-        transition: transform 0.2s ease-in-out;
-    }
-    .stDataFrame:hover, .stPlotlyChart:hover {
-        transform: scale(1.01);
-    }
+    .block-container {padding: 1.2rem;}
+    h1, h2, h3 {color: #2c3e50;}
     </style>
 """, unsafe_allow_html=True)
 
 st.title("📊 Analyse Concurrentielle")
-st.markdown("""
-Analysez facilement la performance des entreprises par secteur, année et d'autres métriques.
-Téléchargez votre fichier Excel et utilisez les filtres pour trouver les entreprises les plus ou les moins performantes.
-""")
 
-uploaded_file = st.file_uploader("📂 Téléversez le fichier Excel", type=["xlsx"])
+DATA_PATH = "companies.xlsx"
 
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+@st.cache_data(ttl=300)
+def load_excel(path):
+    return pd.read_excel(path)
 
-    st.success("✅ Fichier téléversé et données chargées avec succès !")
+df = None
+if os.path.exists(DATA_PATH):
+    try:
+        df = load_excel(DATA_PATH)
+    except Exception as e:
+        st.error(f"Erreur lecture {DATA_PATH}: {e}")
+        df = None
 
-    st.sidebar.header("🔍 Filtres")
-    sector_list = df['Secteur'].dropna().unique().tolist()
-    sector = st.sidebar.selectbox("🏣 Sélectionner un secteur", ["Tous"] + sorted(sector_list))
+if df is None:
+    uploaded_file = st.file_uploader("📂 Téléversez le fichier Excel (si 'companies.xlsx' absent)", type=["xlsx"])
+    if uploaded_file:
+        df = pd.read_excel(uploaded_file)
+    else:
+        st.info("📁 Aucune donnée chargée. Téléversez un fichier ou placez 'companies.xlsx' dans le dossier de l'app.")
+        st.stop()
 
-    year = st.sidebar.selectbox("📅 Sélectionner une année", [2020, 2021, 2022, 2023])
-    metric_options = {
-        "Chiffre d'affaires": f"Chiffre d'affaires {year} (Dhs)",
-        "Résultat d'exploitation": f"Resultat d'exploitation {year} (Dhs)",
-        "Stock": f"Stock {year}",
-        "Charges personnel": f"Charges personnel {year}",
-        "Marge EBIT/CA": f"Marge EBIT/CA {year}",
-        "Marge EBIT/CP": f"Marge EBIT/CP {year}",
-        "Marge CP/CA": f"Marge CP/CA {year}"
-    }
-    metric = st.sidebar.selectbox("📈 Sélectionner une métrique", list(metric_options.keys()))
-    metric_col = metric_options[metric]
-    top_n = st.sidebar.slider("🏆 Nombre d'entreprises à afficher", 5, 50, 10)
-    ascending = st.sidebar.checkbox("🔽 Afficher les moins performantes", value=False)
+cols = list(df.columns)
+cols_lower = [c.lower() for c in cols]
 
-    st.sidebar.markdown("---")
+def find_col(keyword_tokens, year=None):
+    for i, col in enumerate(cols):
+        cl = col.lower()
+        if all(tok.lower() in cl for tok in keyword_tokens):
+            if year is None or str(year) in cl:
+                return col
+    return None
 
-    st.sidebar.subheader("📈 Analyse sectorielle")
+def get_column_for(metric_key, year):
+    col = find_col(metric_key, year)
+    if not col and year is not None:
+        col = find_col(metric_key, None)
+    return col
 
-    sector_for_evolution = st.sidebar.selectbox("🏭 Sélectionnez un secteur pour analyse d'évolution", ["Aucun"] + sorted(sector_list), index=0)
+YEARS = [2020, 2021, 2022, 2023]
+SECTOR_COL = None
+COMPANY_COL = None
+COMPANY_COL2 = None
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🏢 Analyse d'une entreprise spécifique")
-    company_names = df['Raison Sociale (Kerix)'].dropna().unique().tolist()
-    selected_company = st.sidebar.selectbox("🔎 Rechercher une entreprise", ["Aucune"] + sorted(company_names))
+for c in cols:
+    lc = c.lower()
+    if "secteur" in lc:
+        SECTOR_COL = c
+    if ("raison" in lc and "kerix" in lc) or ("raison" in lc and "sociale" in lc):
+        COMPANY_COL = c
+    if ("raison" in lc and "nouvelle" in lc):
+        COMPANY_COL2 = c
+if COMPANY_COL is None:
+    string_cols = [c for c in cols if df[c].dtype == object]
+    COMPANY_COL = string_cols[0] if string_cols else cols[0]
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📊 Comparaison multi-entreprises")
-    selected_companies = st.sidebar.multiselect("Sélectionner plusieurs entreprises", sorted(company_names), default=company_names[:2])
-    selected_years = st.sidebar.multiselect("Sélectionner les années", [2020, 2021, 2022, 2023], default=[2020, 2021, 2022, 2023])
-    selected_metrics = st.sidebar.multiselect("Sélectionner les critères", list(metric_options.keys()), default=["Chiffre d'affaires"])
+if SECTOR_COL is None:
+    for c in cols:
+        if "secteur" in c.lower():
+            SECTOR_COL = c
+if SECTOR_COL is None:
+    df['Secteur'] = 'Tous'
+    SECTOR_COL = 'Secteur'
 
-    filtered_df = df.copy()
-    if sector != "Tous":
-        filtered_df = filtered_df[filtered_df['Secteur'] == sector]
+st.sidebar.header("🔍 Filtres")
+sector_list = list(df[SECTOR_COL].dropna().unique())
+sector_choice = st.sidebar.selectbox("🏣 Sélectionner un secteur", ["Tous"] + sorted(sector_list))
+metric_display_year = st.sidebar.selectbox("Année pour affichages (top / parts de marché)", YEARS, index=3)
+top_n = st.sidebar.number_input("Nombre d'entreprises à afficher", min_value=3, max_value=200, value=10, step=1)
 
-    filtered_df = filtered_df[["Raison Sociale (Kerix)", metric_col, "Secteur"]].dropna()
-    filtered_df[metric_col] = pd.to_numeric(filtered_df[metric_col], errors='coerce')
-    filtered_df = filtered_df.dropna(subset=[metric_col])
-    filtered_df = filtered_df.sort_values(by=metric_col, ascending=ascending).head(top_n)
+def safe_to_numeric(series):
+    return pd.to_numeric(series, errors='coerce')
 
-    filtered_df[f"{metric_col}_formatted"] = filtered_df[metric_col].apply(lambda x: f"{int(x):,}".replace(",", "."))
+METRIC_TOKENS = {
+    "CA": ["chiffre", "affaires"],
+    "RE": ["resultat", "exploitation"],
+    "CP": ["charges", "personnel"],
+    "EBIT_CA": ["marge", "ebit", "ca"],
+    "EBIT_CP": ["marge", "ebit", "cp"],
+    "CP_CA": ["marge", "cp", "ca"],
+}
 
-    st.subheader(f"{'🔻 Moins performantes' if ascending else '📁 Top'} {top_n} entreprises par {metric} en {year}")
-    display_df = filtered_df[["Raison Sociale (Kerix)", f"{metric_col}_formatted", "Secteur"]]
-    display_df.columns = ["Raison Sociale", metric, "Secteur"]
-    st.dataframe(display_df, use_container_width=True)
+def build_metric_matrix(df_input, metric_key):
+    cols_found = {}
+    for y in YEARS:
+        col = get_column_for(METRIC_TOKENS[metric_key], y)
+        cols_found[y] = col
+    matrix = pd.DataFrame({COMPANY_COL: df_input[COMPANY_COL]})
+    for y in YEARS:
+        c = cols_found[y]
+        if c is not None:
+            matrix[str(y)] = safe_to_numeric(df_input[c])
+        else:
+            matrix[str(y)] = np.nan
+    return matrix, cols_found
 
-    fig = px.bar(
-        filtered_df,
-        x=metric_col,
-        y="Raison Sociale (Kerix)",
-        orientation='h',
-        color="Secteur",
-        title=f"{'Moins performantes' if ascending else 'Top'} {top_n} entreprises par {metric} ({year})",
-        labels={metric_col: metric, "Raison Sociale (Kerix)": "Entreprise"},
-        height=600
+st.markdown("---")
+
+sector_df = df if sector_choice == "Tous" else df[df[SECTOR_COL] == sector_choice]
+n_companies_sector = len(sector_df)
+
+st.subheader(f"Secteur : {sector_choice} - {n_companies_sector} entreprises")
+agg = {}
+for key in ["CA", "RE", "CP"]:
+    mat, cols_map = build_metric_matrix(sector_df, key)
+    totals = {}
+    means = {}
+    for y in YEARS:
+        totals[y] = mat[str(y)].sum(skipna=True)
+        means[y] = mat[str(y)].mean(skipna=True)
+    agg[key] = {"totals": totals, "means": means, "cols_map": cols_map}
+
+def safe_div(a, b):
+    try:
+        if b == 0 or pd.isna(b):
+            return np.nan
+        return a / b
+    except Exception:
+        return np.nan
+
+latest = metric_display_year
+agg_CA_latest = agg["CA"]["totals"].get(latest, np.nan)
+agg_RE_latest = agg["RE"]["totals"].get(latest, np.nan)
+agg_CP_latest = agg["CP"]["totals"].get(latest, np.nan)
+
+ebit_ca_ratio = safe_div(agg_RE_latest, agg_CA_latest)
+ebit_cp_ratio = safe_div(agg_RE_latest, agg_CP_latest)
+cp_ca_ratio = safe_div(agg_CP_latest, agg_CA_latest)
+
+col1, col2, col3 = st.columns(3)
+col1.metric(f"CA total ({latest})", f"{int(agg_CA_latest):,}".replace(",", ".") if not pd.isna(agg_CA_latest) else "N/A")
+col2.metric(f"Résultat d'exploitation total ({latest})", f"{int(agg_RE_latest):,}".replace(",", ".") if not pd.isna(agg_RE_latest) else "N/A")
+col3.metric(f"Charges personnel total ({latest})", f"{int(agg_CP_latest):,}".replace(",", ".") if not pd.isna(agg_CP_latest) else "N/A")
+
+st.write(f"Ratios agrégés ({latest}): EBIT/CA = {ebit_ca_ratio:.2%} - EBIT/CP = {ebit_cp_ratio:.2%} - CP/CA = {cp_ca_ratio:.2%}")
+
+# Fix: compute_company_cagrs now ensures both v0 and vN are > 0 to avoid complex results
+def compute_company_cagrs(df_input, metric_key):
+    mat, cols_map = build_metric_matrix(df_input, metric_key)
+    cagr_list = []
+    for idx, row in mat.iterrows():
+        v0 = row[str(YEARS[0])]
+        vN = row[str(YEARS[-1])]
+        # require both positive (strictly) to avoid complex roots
+        if pd.notna(v0) and pd.notna(vN) and v0 > 0 and vN > 0:
+            try:
+                cagr = (vN / v0) ** (1 / (len(YEARS) - 1)) - 1
+                # guard against complex (shouldn't happen now), cast to float
+                if isinstance(cagr, complex):
+                    # ignore complex results
+                    continue
+                cagr_list.append(float(cagr))
+            except Exception:
+                continue
+    return cagr_list
+
+st.subheader(f"CAGR moyens du secteur {sector_choice}")
+cagr_results = {}
+cagr_display = []
+for key in ["CA", "RE", "CP"]:
+    cagr_list = compute_company_cagrs(sector_df, key)
+    mean_cagr = np.mean(cagr_list) if len(cagr_list) > 0 else np.nan
+    # ensure we have a real float or NaN
+    if isinstance(mean_cagr, complex):
+        mean_cagr = np.nan
+    cagr_results[key] = mean_cagr
+    cagr_display.append((key, mean_cagr, len(cagr_list)))
+
+for key, mean_cagr, count in cagr_display:
+    if not pd.isna(mean_cagr) and np.isfinite(mean_cagr):
+        st.write(f"- {key} : CAGR moyen = {mean_cagr:.2%} (calculé sur {count} entreprises)")
+    else:
+        st.write(f"- {key} : CAGR moyen = N/A")
+
+st.markdown("### 📈 Évolution moyenne secteur")
+years = YEARS
+ca_means = [agg["CA"]["means"].get(y, np.nan) for y in years]
+re_means = [agg["RE"]["means"].get(y, np.nan) for y in years]
+
+import plotly.graph_objects as go
+
+fig = go.Figure()
+
+# CA bars (left y-axis)
+fig.add_trace(
+    go.Bar(
+        x=years,
+        y=ca_means,
+        name="CA moyen ",
+        marker_color="#2c7fb8",
+        width=0.35,
+        offsetgroup=1
     )
+)
 
-    fig.update_traces(
-        hovertemplate="<b>%{y}</b><br>" + f"{metric} : %{{customdata[0]}}<extra></extra>",
-        customdata=filtered_df[[f"{metric_col}_formatted"]]
+# RE bars (right y-axis)
+fig.add_trace(
+    go.Bar(
+        x=years,
+        y=re_means,
+        name="RE moyen ",
+        marker_color="#de2d26",
+        width=0.35,
+        offsetgroup=2,
+        yaxis="y2"   # <-- assign to second axis
     )
+)
 
-    st.plotly_chart(fig, use_container_width=True)
+# Layout with 2 y-axes
+fig.update_layout(
+    title=f"CA moyen vs RE moyen par entreprise - Secteur: {sector_choice}",
+    xaxis=dict(title="Année"),
+    yaxis=dict(title="CA (Dhs)"),
+    yaxis2=dict(
+        title="RE (Dhs)",
+        overlaying="y",
+        side="right"
+    ),
+    barmode="group",  # <-- forces side by side
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
 
-    st.sidebar.markdown("---")
-    if sector_for_evolution != "Aucun":
-        st.markdown("---")
-        st.subheader(f"📊 Évolution moyenne : {sector_for_evolution}")
-        years_all = [2020, 2021, 2022, 2023]
-        base_metrics = [
-            "Chiffre d'affaires",
-        ]
+st.plotly_chart(fig, use_container_width=True)
 
-        variation_metrics = [
-            ("Variation CA 2020/2021", "Variation CA 2020/2021"),
-            ("Variation CA 2021/2022", "Variation CA 2021/2022"),
-            ("Variation CA 2022/2023", "Variation CA 2022/2023"),
-        ]
-        all_metrics_to_plot = []
-        for m in base_metrics:
-            for y in years_all:
-                all_metrics_to_plot.append( (f"{m} {y}", f"{m} {y} (Dhs)") )
+st.markdown("---")
+st.subheader(f"Parts de marché ({latest})")
+for key, label in [("CA", "Chiffre d'affaires"), ("RE", "Résultat d'exploitation"), ("CP", "Charges personnel")]:
+    col = get_column_for(METRIC_TOKENS[key], latest)
+    if col:
+        temp = sector_df[[COMPANY_COL, COMPANY_COL2, col]].copy()
+        temp[col] = safe_to_numeric(temp[col]).fillna(0)
+        # Create a unified company column using COMPANY_COL if available, otherwise COMPANY_COL2
+        temp['Entreprise'] = temp[COMPANY_COL].combine_first(temp[COMPANY_COL2])
+        total = temp[col].sum()
+        if total == 0:
+            st.write(f"Aucune valeur non-nulle pour {label} ({latest}) - impossible de calculer parts.")
+            continue
+        temp['Part'] = temp[col] / total
+        temp = temp.sort_values(by=col, ascending=False).head(top_n)
+        temp_display = temp[['Entreprise', col, 'Part']].copy()
+        temp_display[col] = temp_display[col].apply(lambda x: f"{int(x):,}".replace(",", "."))
+        temp_display['Part'] = (temp_display['Part'] * 100).round(2).astype(str) + '%'
+        st.write(f"Parts de marché par {label} ({latest}) - secteur {sector_choice}")
+        st.dataframe(
+            temp_display.rename(columns={col: label, 'Part': 'Part (%)'}),
+            use_container_width=True
+        )
+    else:
+        st.write(f"Aucune colonne trouvée pour {label} ({latest}) - impossible de calculer les parts de marché.")
 
-        all_metrics_to_plot.extend(variation_metrics)
-
-        sector_df = df[df["Secteur"] == sector_for_evolution]
-        avg_metrics = {}
-        for label, col in all_metrics_to_plot:
-            if col in sector_df.columns:
-                values = pd.to_numeric(sector_df[col], errors='coerce')
-                avg_metrics[label] = values.mean()
+st.markdown("---")
+st.subheader("🧾 Comparaison multi-entreprises")
+selected_companies = st.multiselect("Sélectionnez (multiselect)", sorted(df[COMPANY_COL].dropna().unique()), default=[])
+compare_metrics = {
+    "Chiffre d'affaires": "CA",
+    "Résultat d'exploitation": "RE",
+    "Charges personnel": "CP",
+    "EBIT/CA": "EBIT_CA",
+    "EBIT/CP": "EBIT_CP",
+    "CP/CA": "CP_CA"
+}
+for label, key in compare_metrics.items():
+    fig = go.Figure()
+    plotted_any = False
+    for company in selected_companies:
+        comp_df = df[df[COMPANY_COL].str.lower().str.strip() == company.lower().strip()]
+        if comp_df.empty:
+            st.warning(f"Entreprise '{company}' non trouvée dans les données - ignorée pour {label}.")
+            continue
+        values = []
+        for y in YEARS:
+            if key in ["CA", "RE", "CP"]:
+                col = get_column_for(METRIC_TOKENS[key], y)
             else:
-                avg_metrics[label] = None
-
-        evolution_data = {}
-
-        for label in avg_metrics:
-            parts = label.rsplit(" ", 1)
-            metric_name = parts[0]
-            year = parts[1]
-
-            if "Variation" in metric_name and "/" in year:
-                if metric_name not in evolution_data:
-                    evolution_data[metric_name] = {}
-                evolution_data[metric_name][year] = avg_metrics[label]
+                col = get_column_for(METRIC_TOKENS[key], y)
+            if col and col in comp_df.columns:
+                val = safe_to_numeric(comp_df.iloc[0][col])
             else:
-                if metric_name not in evolution_data:
-                    evolution_data[metric_name] = {}
-                try:
-                    evolution_data[metric_name][int(year)] = avg_metrics[label]
-                except ValueError:
-                    pass
+                val = np.nan
+            values.append(val)
+        if all(pd.isna(values)):
+            st.info(f"Aucune donnée 2020-2023 trouvée pour '{company}' - métrique {label}.")
+            continue
+        plotted_any = True
+        fig.add_trace(go.Scatter(
+            x=YEARS,
+            y=[0 if pd.isna(v) else v for v in values],
+            mode='lines+markers',
+            name=company,
+            hovertemplate=f"<b>{company}</b><br>Année: %{{x}}<br>{label}: %{{y:,.0f}}<extra></extra>".replace(",", ".")
+        ))
+    sector_cagr = cagr_results.get(key if key in cagr_results else key, np.nan)
+    if key not in cagr_results:
+        try:
+            cgrs = compute_company_cagrs(sector_df, key)
+            sector_cagr = np.mean(cgrs) if len(cgrs) > 0 else np.nan
+        except Exception:
+            sector_cagr = np.nan
+    sector_matrix, _ = build_metric_matrix(sector_df, key)
+    sector_2020_mean = sector_matrix['2020'].mean(skipna=True)
+    if not pd.isna(sector_2020_mean) and not pd.isna(sector_cagr) and np.isfinite(sector_cagr):
+        sector_proj = [sector_2020_mean * ((1 + sector_cagr) ** (y - 2020)) for y in YEARS]
+        fig.add_trace(go.Scatter(
+            x=YEARS,
+            y=sector_proj,
+            mode='lines+markers',
+            name=f"Référence secteur (CAGR moyen {sector_cagr:.2%})",
+            line=dict(dash='dash', color='black'),
+            hovertemplate=f"Référence secteur (%{{x}}): %{{y:,.0f}}".replace(",", ".") + "<extra></extra>"
+        ))
+    fig.update_layout(
+        title=f"Comparaison sur 2020-2023 - {label}",
+        xaxis=dict(tickmode='array', tickvals=YEARS),
+        yaxis_title=label,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
+        height=420
+    )
+    if plotted_any:
+        st.plotly_chart(fig, use_container_width=True)
 
-        for metric_name, year_vals in evolution_data.items():
-            years_sorted = sorted(year_vals.keys())
-            values_sorted = [year_vals[y] if year_vals[y] is not None else 0 for y in years_sorted]
-
-            fig = px.line(
-                x=years_sorted,
-                y=values_sorted,
-                labels={"x": "Année", "y": metric_name},
-                title=f"Évolution moyenne de la variable \"{metric_name}\" pour le secteur {sector_for_evolution}<br>Étude basée sur les {len(sector_df)} boites les plus grandes du Maroc en terme de CA - Données disponibles",
-                markers=True
-            )
-            fig.update_layout(
-                xaxis=dict(tickmode="array", tickvals=years_sorted, tickformat='d'),
-                yaxis_title=metric_name,
-                hovermode="x unified"
-            )
+st.markdown("---")
+st.subheader("🔎 Détails entreprise")
+company_single = st.selectbox("Sélectionner une entreprise pour détails", ["Aucune"] + sorted(list(df[COMPANY_COL].dropna().unique())))
+if company_single != "Aucune":
+    comp_df = df[df[COMPANY_COL] == company_single]
+    if comp_df.empty:
+        st.write("Entreprise non trouvée.")
+    else:
+        metrics_for_display = ["CA", "RE", "CP", "EBIT_CA"]
+        for key in metrics_for_display:
+            mat, _ = build_metric_matrix(comp_df, key)
+            values = [mat[str(y)].iloc[0] if str(y) in mat.columns else np.nan for y in YEARS]
+            if all(pd.isna(values)):
+                continue
+            title = {
+                "CA": "Chiffre d'affaires",
+                "RE": "Résultat d'exploitation",
+                "CP": "Charges personnel",
+                "EBIT_CA": "Marge EBIT/CA"
+            }.get(key, key)
+            fig = px.line(x=YEARS, y=[0 if pd.isna(v) else v for v in values], markers=True, labels={'x': 'Année', 'y': title}, title=f"{title} - {company_single}")
             st.plotly_chart(fig, use_container_width=True)
-            
-    if selected_companies and selected_metrics and selected_years:
-        st.markdown("---")
-        st.subheader("🔍 Comparaison de plusieurs entreprises")
 
-        for metric_name in selected_metrics:
-            metric_code = metric_options[metric_name].split()[0]
-            metric_label = metric_name
-            fig = go.Figure()
-
-            for company in selected_companies:
-                company_df = df[df["Raison Sociale (Kerix)"] == company]
-                values = []
-                for y in selected_years:
-                    possible_cols = [col for col in df.columns if metric_code in col and str(y) in col]
-                    if possible_cols:
-                        if not company_df.empty and possible_cols[0] in company_df.columns:
-                            val = company_df[possible_cols[0]].values[0]
-                        else:
-                            val = None
-                    else:
-                        val = 0
-                    values.append(val if pd.notna(val) else 0)
-
-                fig.add_trace(go.Scatter(
-                    x=selected_years,
-                    y=values,
-                    mode='lines+markers',
-                    name=company,
-                    hovertemplate=f"<b>{company}</b><br>Année: %{{x}}<br>{metric_label}: %{{y:,.0f}}".replace(",", ".") + "<extra></extra>",
-                ))
-
-            fig.update_layout(
-                title=f"Comparaison - {metric_label}",
-                xaxis_title="Année",
-                yaxis_title=metric_label,
-                xaxis=dict(tickmode='array', tickvals=selected_years),
-                hovermode="x unified"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    
-    if selected_company != "Aucune":
-        st.markdown("---")
-        st.subheader(f"📈 Évolution des performances de l'entreprise : {selected_company}")
-        years = [2020, 2021, 2022, 2023]
-
-        metrics_to_plot = [
-            (f"Chiffre d'affaires {{year}} (Dhs)", "Chiffre d'affaires"),
-            ("Resultat d'exploitation {year} (Dhs)", "Résultat d'exploitation"),
-            ("Charges personnel {year}", "Charges personnel"),
-            ("Marge EBIT/CA {year}", "Marge EBIT/CA")
-        ]
-
-        company_data = df[df['Raison Sociale (Kerix)'] == selected_company]
-        for template, label in metrics_to_plot:
-            values = []
-            for y in years:
-                col = template.format(year=y)
-                val = company_data[col].values[0] if col in company_data.columns else None
-                values.append(val if pd.notna(val) else 0)
-
-            line_fig = px.line(
-                x=years,
-                y=values,
-                labels={'x': 'Année', 'y': label},
-                markers=True,
-                title=f"{label} de {selected_company} (2020 - 2023)"
-            )
-            line_fig.update_layout(
-                xaxis=dict(
-                    tickmode='array',
-                    tickvals=years,
-                    tickformat='d'
-                )
-            )
-            st.plotly_chart(line_fig, use_container_width=True)
-
-    with st.expander("🔎 Afficher les données brutes"):
-        st.dataframe(df, use_container_width=True)
-else:
-    st.info("📁 Veuillez téléverser un fichier Excel pour commencer l'analyse.")
+with st.expander("🔎 Afficher les données brutes"):
+    st.dataframe(df, use_container_width=True)
