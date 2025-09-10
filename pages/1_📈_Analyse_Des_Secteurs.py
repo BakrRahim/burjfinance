@@ -241,7 +241,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
     )    
     max_ca = merged_df["CA"].max() if merged_df["CA"].max() > 0 else 1
     fig.update_layout(
-        title=f"i. Évolution de CA et RE pour {sector_name}" + (f" - {title_suffix}" if title_suffix else ""),
+        title=f"i. Évolution de CA, RE et Marge EBIT/CA pour {sector_name}" + (f" - {title_suffix}" if title_suffix else ""),
         xaxis_title="Année",
         xaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)', zeroline=True,zerolinecolor="black",
         zerolinewidth=1),
