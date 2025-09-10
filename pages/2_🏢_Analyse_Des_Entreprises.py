@@ -1131,21 +1131,35 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
         ca_vals, re_vals = [], []
         for y in years:
             if is_group:
-                ca_val = group_manager.get_group_data(entity, df, "CA", y) if "CA" in METRIC_TOKENS else np.nan
-                re_val = group_manager.get_group_data(entity, df, "RE", y) if "RE" in METRIC_TOKENS else np.nan
+                companies_in_group = group_manager.groups[entity].get("companies", [])                
+                ca_val = re_val = 0
+                for comp in companies_in_group:
+                    comp_df = safe_find_company(df, comp, COMPANY_COL)
+                    if not comp_df.empty:
+                        ca_col = get_column_for("CA", y)
+                        re_col = get_column_for("RE", y)
+                        ca_val += safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col and ca_col in comp_df.columns else 0
+                        re_val += safe_to_numeric(comp_df.iloc[0][re_col]) if re_col and re_col in comp_df.columns else 0
+                if ca_val == 0:
+                    ca_val = np.nan
+                if re_val == 0:
+                    re_val = np.nan
+
             else:
                 comp_df = safe_find_company(df, entity, COMPANY_COL)
                 if not comp_df.empty:
                     ca_col = get_column_for("CA", y)
                     re_col = get_column_for("RE", y)
-                    ca_val = safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col and ca_col in comp_df.columns else np.nan
-                    re_val = safe_to_numeric(comp_df.iloc[0][re_col]) if re_col and re_col in comp_df.columns else np.nan
+                    ca_val = safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col else np.nan
+                    re_val = safe_to_numeric(comp_df.iloc[0][re_col]) if re_col else np.nan
                 else:
                     ca_val = re_val = np.nan
             ca_vals.append(ca_val)
             re_vals.append(re_val)
+
         margin_vals = [(re / ca) if pd.notna(re) and pd.notna(ca) and ca != 0 else np.nan
-                       for re, ca in zip(re_vals, ca_vals)]
+                    for re, ca in zip(re_vals, ca_vals)]
+
         base_color = color_map.get(entity, "#636EFA")
         margin_color = adjust_color_brightness(base_color, 0.9)
         fig.add_trace(go.Bar(
