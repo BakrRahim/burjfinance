@@ -630,7 +630,7 @@ if multi_sectors:
     max_ca = max([df[df['Secteur']==s][f"Chiffre d'affaires {y} (Dhs)"].sum() for s in multi_sectors for y in years if len(df[df['Secteur']==s]) > 0]) if multi_sectors else 1
     
     combined_fig.update_layout(
-        title=f"i. Comparaison CA, Variation et CAGR pour {len(multi_sectors)} Secteurs (2020-2023)",
+        title=f"i. Comparaison CA, Marge EBIT/CA et CAGR pour {len(multi_sectors)} Secteurs (2020-2023)",
         xaxis_title="Année",
         xaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)'),
         height = 700,
