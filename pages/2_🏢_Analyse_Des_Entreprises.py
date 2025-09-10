@@ -720,6 +720,19 @@ if display_mode == "Entreprise individuelle":
                         textfont=dict(size=18),
                         yaxis="y2" if "marge" in title.lower() else "y"
                     ))
+                if len(values) > 1 and "marge" in title.lower():
+                    pct_change = np.array([np.nan] + list(np.array(values)[1:] / np.array(values)[:-1] - 1))
+                    fig.add_trace(go.Scatter(
+                        x=YEARS[:len(values)],
+                        y=values,
+                        mode="lines+text",
+                        name=f"{company_single} – Var {title}",
+                        line=dict(shape="spline", dash="dot", color=color_map[company_single]),
+                        text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
+                        textposition="top center",
+                        textfont=dict(size=18),
+                        yaxis="y" if "marge" in title.lower() else "y"
+                    ))
                 fig.add_annotation(
                     text=f"CAGR: {(calculate_cagr(values[0], values[-1], n_years)*100):.2f}%",
                     xref="paper", yref="paper", x=0.5, y=1.15,
@@ -937,6 +950,19 @@ elif display_mode == "Groupe d'entreprises":
                                 textfont=dict(size=18),
                                 yaxis="y2" if "marge" in title.lower() else "y"
                             ))
+                    if len(values) > 1 and "marge" in title.lower():
+                        pct_change = np.array([np.nan] + list(np.array(values)[1:] / np.array(values)[:-1] - 1))
+                        fig.add_trace(go.Scatter(
+                            x=YEARS[:len(values)],
+                            y=values,
+                            mode="lines+text",
+                            name=f"{selected_group} – Var {title}",
+                            line=dict(shape="spline", dash="dot", color="#0049AF"),
+                            text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
+                            textposition="top center",
+                            textfont=dict(size=18),
+                            yaxis="y" if "marge" in title.lower() else "y"
+                        ))
                     fig.add_annotation(
                         text=f"CAGR: {(calculate_cagr(values[0], values[-1], n_years)*100):.2f}%",
                         xref="paper", yref="paper", x=0.5, y=1.15,
@@ -1222,6 +1248,18 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
             if len(values) > 1:
                 valid_values = [v for v in values if pd.notna(v)]
                 if len(valid_values) > 1 and metric_key not in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+                    pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
+                    fig.add_trace(go.Scatter(
+                        x=x_offset,
+                        y=values,
+                        mode="lines+text",
+                        name=f"{display_name} - Var",
+                        line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
+                        text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
+                        textposition="top center",
+                        textfont=dict(size=14),
+                    ))
+                if len(valid_values) > 1 and metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
                     pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
                     fig.add_trace(go.Scatter(
                         x=x_offset,

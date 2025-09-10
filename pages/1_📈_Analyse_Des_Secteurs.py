@@ -227,7 +227,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         text=f"CAGR CA: {(cagr_ca*100):.2f}%",
         xref="paper", yref="paper", x=0.25, y=1.15,
         showarrow=False,
-        font=dict(size=14, color="blue", family="Arial Black"),
+        font=dict(size=14, color="blue"),
         bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
         borderwidth=1, borderpad=4,
     )
@@ -235,7 +235,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         text=f"CAGR RE: {(cagr_re*100):.2f}%",
         xref="paper", yref="paper", x=0.75, y=1.15,
         showarrow=False,
-        font=dict(size=14, color="red", family="Arial Black"),
+        font=dict(size=14, color="red"),
         bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
         borderwidth=1, borderpad=4,
     )    
@@ -334,7 +334,7 @@ if charges_yearly.shape[0] >= 2:
         text=f"CAGR: {(cagr_charges*100):.2f}%",
         xref="paper", yref="paper", x=0.5, y=1.15,
         showarrow=False,
-        font=dict(size=16, color="black", family="Arial Black"),
+        font=dict(size=16, color="black"),
         bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
         borderwidth=1, borderpad=4,
     )
@@ -382,7 +382,7 @@ for var_name, cols in marge_variables.items():
     fig.add_trace(go.Bar(
         x=sector_yearly["Année"],
         y=sector_yearly[var_name],
-        name=f"{var_name} Moyen",
+        name=f"{var_name}",
         text=[f"{v*100:.1f}%" if not pd.isna(v) else "" for v in sector_yearly[var_name]],
         textfont=dict(size=16),
         textposition="auto",
@@ -405,7 +405,7 @@ for var_name, cols in marge_variables.items():
         xref="paper", yref="paper",
         x=0.5, y=1.15,
         showarrow=False,
-        font=dict(size=16, color="black", family="Arial Black"),
+        font=dict(size=16, color="black"),
         bgcolor="rgba(255,255,255,0.8)",
         bordercolor="black",
         borderwidth=1,
@@ -512,7 +512,7 @@ def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, cha
             xref="paper",
             yref="paper",
             showarrow=False,
-            font=dict(size=14, color=color, family="Arial Black"),
+            font=dict(size=14, color=color),
             bgcolor="rgba(255,255,255,0.8)",
             bordercolor=color,
             borderwidth=1,
