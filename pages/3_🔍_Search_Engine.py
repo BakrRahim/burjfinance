@@ -4,6 +4,7 @@ import numpy as np
 import io
 import re
 from typing import List, Tuple, Dict, Any
+
 try:
     from rapidfuzz import fuzz
     def fuzzy_ratio(a: str, b: str) -> float:
@@ -22,11 +23,13 @@ except Exception:
         return difflib.SequenceMatcher(None, a, b).ratio()
 st.set_page_config(page_title="Search Engine", layout="wide")
 st.title("🔍 Search Engine")
+
 def get_col(df: pd.DataFrame, candidates: List[str]):
     for c in candidates:
         if c in df.columns:
             return c
     return None
+
 def split_tokens(text: str) -> List[str]:
     if pd.isna(text):
         return []
@@ -63,6 +66,21 @@ def split_tokens(text: str) -> List[str]:
             seen.add(v)
             out.append(v)
     return out
+
+def join_products_for_group(products_list: List[str], separator: str = " | ") -> str:
+    if not products_list:
+        return ""
+    all_products = []
+    for products_str in products_list:
+        if pd.isna(products_str) or not str(products_str).strip():
+            continue
+        product_text = str(products_str).strip()
+        all_products.append(product_text)
+    if not all_products:
+        return ""
+    combined = separator.join(all_products)
+    return combined
+
 def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: float) -> Tuple[int, int]:
     if not seed_tokens:
         return 0, 0
@@ -73,11 +91,13 @@ def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: flo
                 matched += 1
                 break
     return matched, len(seed_tokens)
+
 def frac_str(m: int, t: int) -> str:
     if t == 0:
         return "0/0 (N/A)"
     ratio = m / max(1, t)
     return f"{int(m)}/{int(t)} ({ratio:.2f})"
+
 def load_or_upload(filename: str, prompt_label: str):
     try:
         df = pd.read_excel(filename)
@@ -94,7 +114,7 @@ def load_or_upload(filename: str, prompt_label: str):
         except Exception as e:
             st.error(f"Erreur en lisant {filename}: {e}")
             return None
-        
+
 def compact_num(n) -> str:
     if pd.isna(n):
         return "N/A"
@@ -104,17 +124,18 @@ def compact_num(n) -> str:
             n = 0
     except Exception:
         return str(n)
-    B = 1_000_000_000
-    M = 1_000_000
-    K = 1_000
+    B = 1_000_000_0000
+    M = 1_000_0000
+    K = 1_0000
     if abs(n) >= B:
-        return f"{n / B:.1f}B"
+        return f"{n / B:.2f}B"
     elif abs(n) >= M:
         return f"{n / M:.1f}M"
     elif abs(n) >= K:
         return f"{n / K:.1f}K"
     else:
         return f"{n:,.0f}"
+
 def format_range_compact(mi, ma) -> str:
     if pd.isna(mi) and pd.isna(ma):
         return "N/A"
@@ -125,6 +146,7 @@ def format_range_compact(mi, ma) -> str:
     if mi == ma:
         return compact_num(mi)
     return f"de {compact_num(mi)} à {compact_num(ma)}"
+
 def parse_revenue_text(s: str) -> Tuple[float, float]:
     if pd.isna(s):
         return np.nan, np.nan
@@ -161,39 +183,44 @@ def parse_revenue_text(s: str) -> Tuple[float, float]:
         val = float(norm_nums[0])
         return val, val
     return np.nan, np.nan
+
 def find_numeric_columns(df: pd.DataFrame) -> List[str]:
     numeric_cols = []
     for col in df.columns:
         if df[col].dtype in ['int64', 'float64'] or (df[col].dtype == 'object' and pd.to_numeric(df[col], errors='coerce').notna().sum() > 0):
             numeric_cols.append(col)
     return numeric_cols
+
 def create_group_display_name(companies_list: List[str]) -> str:
     if not companies_list:
         return "Groupe Vide"
     if len(companies_list) == 1:
         return companies_list[0]
     return f"Groupe ({len(companies_list)} entreprises)"
+
 def create_group_from_selection(selected_companies: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not selected_companies:
         return {}
     group_name = st.session_state.get('new_group_name', f"Groupe {len(st.session_state.get('groups', {})) + 1}")
-    all_products = []
+    all_products_raw = []
+    company_names_for_display = []
     for c in selected_companies:
-        if c.get('products'):
-            all_products.extend(split_tokens(c['products']))
-    unique_products = list(set(all_products))
+        if isinstance(c, dict) and c.get('products'):
+            all_products_raw.append(c['products'])
+        if isinstance(c, dict) and c.get('name'):
+            company_names_for_display.append(c['name'])
     group_data = {
         'name': group_name,
         'companies': selected_companies,
-        'display_name': create_group_display_name([c['name'] for c in selected_companies]),
-        'products': ', '.join(unique_products),
-        'revenue_min': min([c.get('revenue_min', np.inf) for c in selected_companies]),
-        'revenue_max': max([c.get('revenue_max', -np.inf) for c in selected_companies]),
-        'operating_income': sum([c.get('operating_income', 0) for c in selected_companies]),
-        'city': ', '.join(set([c.get('city', '') for c in selected_companies if c.get('city')])),
-        'sector': ', '.join(set([c.get('sector', '') for c in selected_companies if c.get('sector')])),
+        'display_name': create_group_display_name(company_names_for_display) if company_names_for_display else group_name,
+        'products': join_products_for_group(all_products_raw, separator=" | "),
+        'revenue_min': min([c.get('revenue_min', np.inf) for c in selected_companies if isinstance(c, dict)]),
+        'revenue_max': max([c.get('revenue_max', -np.inf) for c in selected_companies if isinstance(c, dict)]),
+        'operating_income': sum([c.get('operating_income', 0) for c in selected_companies if isinstance(c, dict)]),
+        'city': ', '.join(set([c.get('city', '') for c in selected_companies if isinstance(c, dict) and c.get('city')])),
+        'sector': ', '.join(set([c.get('sector', '') for c in selected_companies if isinstance(c, dict) and c.get('sector')])),
         'metadata': selected_companies,
-        'company_names': [c['name'] for c in selected_companies]
+        'company_names': [c['name'] for c in selected_companies if isinstance(c, dict) and c.get('name')]
     }
     return group_data
 df_companies = load_or_upload("companies.xlsx", "companies.xlsx")
@@ -201,6 +228,7 @@ df_kerix = load_or_upload("kerix.xlsx", "kerix.xlsx")
 if df_companies is None and df_kerix is None:
     st.error("Au moins une des bases (companies.xlsx ou kerix.xlsx) doit être fournie.")
     st.stop()
+
 def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFrame, dict]:
     df = df.copy()
     info = {}
@@ -284,6 +312,7 @@ if 'groups' not in st.session_state:
     st.session_state.groups = {}
 if 'group_exclusions' not in st.session_state:
     st.session_state.group_exclusions = {'companies': set(), 'kerix': set()}
+
 def apply_group_exclusions(df, db_name):
     if not st.session_state.groups:
         return df
@@ -319,74 +348,76 @@ if 'current_search_target' not in st.session_state:
 st.subheader("🏢 Gestion des Groupes d'Entreprises")
 group_tab1, group_tab2 = st.tabs(["Créer un groupe", "Groupes existants"])
 with group_tab1:
-    with st.form("create_group_form"):
-        new_group_name = st.text_input("Nom du groupe", value=f"Groupe {len(st.session_state.groups) + 1}")
-        st.session_state.new_group_name = new_group_name
-        available_companies = []
-        if df_companies_prepared is not None:
-            for _, row in df_companies_prepared.iterrows():
-                available_companies.append({
-                    'name': row['_display_name'],
-                    'products': row.get('_products', ''),
-                    'revenue_min': row.get('_revenue_min', np.nan),
-                    'revenue_max': row.get('_revenue_max', np.nan),
-                    'operating_income': row.get('_operating_income', 0),
-                    'city': row.get('_city', ''),
-                    'sector': row.get('_sector', '')
-                })
-        if df_kerix_prepared is not None:
-            for _, row in df_kerix_prepared.iterrows():
-                available_companies.append({
-                    'name': row['_display_name'],
-                    'products': row.get('_products', ''),
-                    'revenue_min': row.get('_revenue_min', np.nan),
-                    'revenue_max': row.get('_revenue_max', np.nan),
-                    'operating_income': row.get('_operating_income', 0),
-                    'city': row.get('_city', ''),
-                    'sector': row.get('_sector', '')
-                })
-        selected_indices = st.multiselect(
-            "Sélectionnez les entreprises pour le groupe",
-            options=list(range(len(available_companies))),
-            format_func=lambda i: available_companies[i]['name'],
-            max_selections=20
-        )
-        submitted = st.form_submit_button("Créer le groupe")
-        selected_companies = [available_companies[i] for i in selected_indices]
-        if submitted and selected_companies:
-            group_data = create_group_from_selection(selected_companies)
-            st.session_state.groups[group_data['name']] = group_data
-            for company in selected_companies:
+    new_group_name = st.text_input("Nom du groupe", value=f"Groupe {len(st.session_state.groups) + 1}")
+    st.session_state.new_group_name = new_group_name
+    available_companies = []
+    if df_companies_prepared is not None:
+        for _, row in df_companies_prepared.iterrows():
+            available_companies.append({
+                'name': row['_display_name'],
+                'products': row.get('_products', ''),
+                'revenue_min': row.get('_revenue_min', np.nan),
+                'revenue_max': row.get('_revenue_max', np.nan),
+                'operating_income': row.get('_operating_income', 0),
+                'city': row.get('_city', ''),
+                'sector': row.get('_sector', '')
+            })
+    if df_kerix_prepared is not None:
+        for _, row in df_kerix_prepared.iterrows():
+            available_companies.append({
+                'name': row['_display_name'],
+                'products': row.get('_products', ''),
+                'revenue_min': row.get('_revenue_min', np.nan),
+                'revenue_max': row.get('_revenue_max', np.nan),
+                'operating_income': row.get('_operating_income', 0),
+                'city': row.get('_city', ''),
+                'sector': row.get('_sector', '')
+            })
+    selected_indices = st.multiselect(
+        "Sélectionnez les entreprises pour le groupe",
+        options=list(range(len(available_companies))),
+        format_func=lambda i: available_companies[i]['name'],
+        max_selections=20
+    )
+    submitted = st.button("Créer le groupe")
+    selected_companies = [available_companies[i] for i in selected_indices]
+    if submitted and selected_companies:
+        group_data = create_group_from_selection(selected_companies)
+        st.session_state.groups[group_data['name']] = group_data
+        for company in selected_companies:
+            if isinstance(company, dict) and company.get('name'):
                 st.session_state.group_exclusions['companies'].add(company['name']) if df_companies_prepared is not None else None
                 st.session_state.group_exclusions['kerix'].add(company['name']) if df_kerix_prepared is not None else None
-            st.success(f"Groupe '{group_data['name']}' créé avec {len(selected_companies)} entreprises!")
-            st.rerun()
+        st.success(f"Groupe '{group_data['name']}' créé avec {len(selected_companies)} entreprises!")
+        st.rerun()
 with group_tab2:
     if st.session_state.groups:
         for group_name, group_data in list(st.session_state.groups.items()):
-            with st.expander(f"🔸 {group_name} - {group_data['display_name']}"):
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Entreprises", len(group_data['companies']))
-                    st.write(f"**Ville(s):** {group_data.get('city', 'N/A')}")
-                    st.write(f"**Secteur(s):** {group_data.get('sector', 'N/A')}")
-                with col2:
-                    st.metric("CA Min", compact_num(group_data.get('revenue_min', 0)))
-                    st.metric("CA Max", compact_num(group_data.get('revenue_max', 0)))
-                with col3:
-                    st.metric("Résultat d'exploitation", compact_num(group_data.get('operating_income', 0)))
-                if st.button(f"❌ Supprimer {group_name}", key=f"delete_{group_name}"):
-                    if group_name in st.session_state.groups:
-                        del st.session_state.groups[group_name]
-                        st.session_state.group_exclusions['companies'].clear()
-                        st.session_state.group_exclusions['kerix'].clear()
-                        for g_data in st.session_state.groups.values():
-                            for company in g_data['company_names']:
-                                st.session_state.group_exclusions['companies'].add(company)
-                                st.session_state.group_exclusions['kerix'].add(company)
-                        df_companies_prepared = apply_group_exclusions(df_companies, 'companies') if df_companies is not None else None
-                        df_kerix_prepared = apply_group_exclusions(df_kerix, 'kerix') if df_kerix is not None else None
-                        st.rerun()
+            if isinstance(group_data, dict) and 'companies' in group_data:
+                with st.expander(f"🔸 {group_name} - {group_data.get('display_name', 'Groupe sans nom')}"):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Entreprises", len(group_data['companies']))
+                        st.write(f"**Ville(s):** {group_data.get('city', 'N/A')}")
+                        st.write(f"**Secteur(s):** {group_data.get('sector', 'N/A')}")
+                    with col2:
+                        st.metric("CA Min", compact_num(group_data.get('revenue_min', 0)))
+                        st.metric("CA Max", compact_num(group_data.get('revenue_max', 0)))
+                    with col3:
+                        st.metric("Résultat d'exploitation", compact_num(group_data.get('operating_income', 0)))
+                    if st.button(f"❌ Supprimer {group_name}", key=f"delete_{group_name}"):
+                        if group_name in st.session_state.groups:
+                            del st.session_state.groups[group_name]
+                            st.session_state.group_exclusions['companies'].clear()
+                            st.session_state.group_exclusions['kerix'].clear()
+                            for g_data in st.session_state.groups.values():
+                                if isinstance(g_data, dict) and 'company_names' in g_data:
+                                    for company in g_data['company_names']:
+                                        st.session_state.group_exclusions['companies'].add(company)
+                                        st.session_state.group_exclusions['kerix'].add(company)
+                            df_companies_prepared = apply_group_exclusions(df_companies, 'companies') if df_companies is not None else None
+                            df_kerix_prepared = apply_group_exclusions(df_kerix, 'kerix') if df_kerix is not None else None
+                            st.rerun()
     else:
         st.info("Aucun groupe créé pour le moment. Utilisez l'onglet de gauche pour en créer un.")
 st.subheader("🔍 Moteur de Recherche")
@@ -425,39 +456,39 @@ elif search_mode == "Groupe d'entreprises":
     selected_group = st.selectbox("Choisir le groupe seed", group_options)
     if selected_group:
         group_data = st.session_state.groups[selected_group]
-        seed_row = pd.Series({
-            "name": group_data['name'],
-            "Produits / Services": group_data['products'],
-            "_display_name": group_data['display_name']
-        })
-        seed_name_for_exclusion = group_data['display_name']
+        if isinstance(group_data, dict):
+            seed_row = pd.Series({
+                "name": group_data.get('name', selected_group),
+                "Produits / Services": group_data.get('products', ''),
+                "_display_name": group_data.get('display_name', group_data.get('name', selected_group))
+            })
+            seed_name_for_exclusion = group_data.get('display_name', group_data.get('name', selected_group))
 st.subheader("Filtres")
-st.markdown("##### Filtre CA (Chiffre d'affaires)")
 min_val = max(0.0, global_min)
 max_val = max(min_val + 1.0, global_max)
+st.markdown(f"##### Filtre CA (Chiffre d'affaires) - Min: {compact_num(global_min)} | Max: {compact_num(global_max)}")
 range_span = max_val - min_val
 approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
 approx_step = max(1.0, approx_step)
 col1, col2 = st.columns(2)
 with col1:
     ca_min_input = st.number_input(
-        "Min (Dhs)", 
-        min_value=float(min_val), 
+        "Min (Dhs)",
+        min_value=float(min_val),
         max_value=float(max_val),
-        value=min_val,
+        # value=min_val,
         step=float(approx_step)
     )
 with col2:
     ca_max_input = st.number_input(
-        "Max (Dhs)", 
-        min_value=float(ca_min_input), 
+        "Max (Dhs)",
+        min_value=float(ca_min_input),
         max_value=float(max_val),
-        value=max_val,
+        # value=max_val,
         step=float(approx_step)
     )
 ca_min_sel, ca_max_sel = ca_min_input, ca_max_input
 st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
-st.markdown("##### Filtre Résultat d'exploitation")
 all_operating = []
 if df_companies_prepared is not None:
     all_operating.append(df_companies_prepared['_operating_income'])
@@ -469,24 +500,25 @@ if all_operating:
     re_max_val = float(all_operating.max())
 else:
     re_min_val, re_max_val = 0.0, 1_000_000.0
+st.markdown(f"##### Filtre Résultat d'exploitation - Min: {compact_num(re_min_val)} | Max: {compact_num(re_max_val)}")
 re_range = re_max_val - re_min_val
 re_step = 10 ** (int(np.floor(np.log10(max(1.0, abs(re_range)))) - 1))
 re_step = max(1.0, re_step)
 col1, col2 = st.columns(2)
 with col1:
     re_min_input = st.number_input(
-        "Min (Dhs)", 
-        min_value=float(re_min_val), 
+        "Min (Dhs)",
+        min_value=float(re_min_val),
         max_value=float(re_max_val),
-        value=float(re_min_val),
+        value=0.0,
         step=float(re_step)
     )
 with col2:
     re_max_input = st.number_input(
-        "Max (Dhs)", 
-        min_value=float(re_min_input), 
+        "Max (Dhs)",
+        min_value=float(re_min_input),
         max_value=float(re_max_val),
-        value=float(re_max_val),
+        value=0.0,
         step=float(re_step)
     )
 re_min_sel, re_max_sel = re_min_input, re_max_input

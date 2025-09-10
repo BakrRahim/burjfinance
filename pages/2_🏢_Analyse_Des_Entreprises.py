@@ -1271,7 +1271,7 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                         line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
                         text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
                         textposition="top center",
-                        textfont=dict(size=14),
+                        textfont=dict(size=16),
                     ))
                 if len(valid_values) > 1 and metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
                     pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
@@ -1283,7 +1283,7 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                         line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
                         text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
                         textposition="top center",
-                        textfont=dict(size=14),
+                        textfont=dict(size=16),
                     ))
     metric_display_name = {
         "CA": "Chiffre d'affaires",
