@@ -143,6 +143,18 @@ def aggregate_group_data(group_entities, df, metric_key, year):
             st.warning(f"Error processing entity '{group_entities}': {e}")
             return np.nan
     valid_values = [v for v in total_values if pd.notna(v) and not isinstance(v, (str, bool))]
+    if metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+        if valid_values:
+            ca_vals = [aggregate_group_data(group_entities, df, "CA", year) for _ in range(len(valid_values))]
+            re_vals = [aggregate_group_data(group_entities, df, "RE", year) for _ in range(len(valid_values))]
+            cp_vals = [aggregate_group_data(group_entities, df, "CP", year) for _ in range(len(valid_values))]
+            if metric_key == "EBIT_CA" and ca_vals[0] != 0:
+                return np.mean([re/ca if ca != 0 else np.nan for re, ca in zip(re_vals, ca_vals)])
+            elif metric_key == "EBIT_CP" and cp_vals[0] != 0:
+                return np.mean([re/cp if cp != 0 else np.nan for re, cp in zip(re_vals, cp_vals)])
+            elif metric_key == "CP_CA" and ca_vals[0] != 0:
+                return np.mean([cp/ca if ca != 0 else np.nan for cp, ca in zip(cp_vals, ca_vals)])
+        return np.nan
     return sum(valid_values) if valid_values else np.nan
 def create_group_representation(group_entities, company_name_map=None):
     if company_name_map is None:
@@ -565,7 +577,6 @@ if display_mode == "Entreprise individuelle":
                        f"{cp_val:,.0f} Dhs" if pd.notna(cp_val) else "N/A")
             col4.metric(f"Marge EBIT/CA (%) {metric_display_year}",
                        f"{ebit_val*100:.2f}%" if pd.notna(ebit_val) else "N/A")
-            # st.markdown("---")
             ca_cols = [f"Chiffre d'affaires {y} (Dhs)" for y in YEARS]
             re_cols = [f"Resultat d'exploitation {y} (Dhs)" for y in YEARS]
             cp_cols = [f"Charges personnel {y}" for y in YEARS]
@@ -656,7 +667,6 @@ if display_mode == "Entreprise individuelle":
             )
             fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig, use_container_width=True)
-            # st.markdown("---")
             metrics_for_trends = {
                 "Chiffre d'affaires": [f"Chiffre d'affaires {y} (Dhs)" for y in YEARS],
                 "Résultat d'exploitation": [f"Resultat d'exploitation {y} (Dhs)" for y in YEARS],
@@ -821,17 +831,13 @@ elif display_mode == "Groupe d'entreprises":
                            f"{cp_val:,.0f} Dhs" if pd.notna(cp_val) else "N/A")
                 col4.metric(f"Marge EBIT/CA (%) {metric_display_year} - {selected_group}",
                            f"{ebit_val:.2f}%" if pd.notna(ebit_val) else "N/A")
-                # st.markdown("---")
                 ca_values = [aggregate_group_data(companies_in_group, df, "CA", y) for y in YEARS]
                 re_values = [aggregate_group_data(companies_in_group, df, "RE", y) for y in YEARS]
                 cp_values = [aggregate_group_data(companies_in_group, df, "CP", y) for y in YEARS]
-                ca_values = np.array([v if pd.notna(v) else 0 for v in ca_values], dtype=float)
-                re_values = np.array([v if pd.notna(v) else 0 for v in re_values], dtype=float)
-                cp_values = np.array([v if pd.notna(v) else 0 for v in cp_values], dtype=float)
                 n_years = len(YEARS) - 1
                 cagr_ca = calculate_cagr(ca_values[0], ca_values[-1], n_years)
                 cagr_re = calculate_cagr(re_values[0], re_values[-1], n_years)
-                marge_values = np.array([re/ca if ca != 0 else np.nan for re, ca in zip(re_values, ca_values)])
+                marge_values = np.array([aggregate_group_data(companies_in_group, df, "EBIT_CA", y) for y in YEARS])
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     x=YEARS,
@@ -893,7 +899,6 @@ elif display_mode == "Groupe d'entreprises":
                 )
                 fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
                 st.plotly_chart(fig, use_container_width=True)
-                # st.markdown("---")
                 metrics_for_trends = {
                     "Chiffre d'affaires": ["CA"],
                     "Résultat d'exploitation": ["RE"],
@@ -961,21 +966,24 @@ elif display_mode == "Groupe d'entreprises":
                         'CA': aggregate_group_data(companies_in_group, df, "CA", y),
                         'RE': aggregate_group_data(companies_in_group, df, "RE", y),
                         'CP': aggregate_group_data(companies_in_group, df, "CP", y),
+                        'EBIT_CA': aggregate_group_data(companies_in_group, df, "EBIT_CA", y),
+                        'EBIT_CP': aggregate_group_data(companies_in_group, df, "EBIT_CP", y),
+                        'CP_CA': aggregate_group_data(companies_in_group, df, "CP_CA", y),
                     }
-                    if data_dict[y]['CA'] != 0:
-                        data_dict[y]['EBIT_CA'] = (data_dict[y]['RE'] / data_dict[y]['CA']) * 100
-                    else:
-                        data_dict[y]['EBIT_CA'] = np.nan
                 df_group = pd.DataFrame(data_dict).T
                 df_group.index.name = "Année"
-                df_group = df_group.round(2)
-                st.dataframe(df_group, use_container_width=True)
+                def format_cell(value, col_name):
+                    if col_name in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+                        return format_number(value, percent=True)
+                    else:
+                        return format_number(value)
+                df_group_formatted = df_group.apply(lambda col: col.map(lambda v: format_cell(v, col.name)))
+                st.dataframe(df_group_formatted, use_container_width=True)
     else:
         st.info("Aucun groupe créé. Utilisez le formulaire ci-dessus pour en créer un.")
 st.markdown("---")
 st.subheader("B. Vue entreprise comparative")
 brand_colors = ["#052449", "#0064EF", "#428DF2", "#375F92", "#003967", "#FF6B6B", "#4ECDC4", "#45B7D1"]
-
 available_individual_companies = [
     c.strip() for c in sorted(df[COMPANY_COL].dropna().astype(str).str.strip().unique())
     if c.strip() not in grouped_companies
@@ -1161,98 +1169,99 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
-def plot_enhanced_multi_metrics(df, years, entities, metric_configs, color_map=None):
+def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None):
     if not entities or df is None or df.empty:
         return
     if color_map is None:
         color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(entities)}
-    for metric_name, col_configs in metric_configs.items():
-        if not col_configs:
+    fig = go.Figure()
+    n_entities = len([e for e in entities if isinstance(e, str) and e.strip()])
+    if n_entities == 0:
+        return
+    bar_width = 0.5 / max(n_entities, 1)
+    if metric_key not in METRIC_TOKENS:
+        st.warning(f"Invalid metric_key '{metric_key}'. Available: {list(METRIC_TOKENS.keys())}")
+        return
+    for i, entity in enumerate(entities):
+        if not isinstance(entity, str) or not entity.strip():
             continue
-        fig = go.Figure()
-        n_entities = len([e for e in entities if isinstance(e, str) and e.strip()])
-        if n_entities == 0:
-            continue
-        bar_width = 0.5 / max(n_entities, 1)
-        metric_key = None
-        metric_name_lower = metric_name.lower()
-        if any(term in metric_name_lower for term in ["chiffre", "ca", "affaire"]):
-            metric_key = "CA"
-        elif any(term in metric_name_lower for term in ["resultat", "re", "exploitation"]):
-            metric_key = "RE"
-        elif any(term in metric_name_lower for term in ["charge", "personnel", "cp"]):
-            metric_key = "CP"
-        elif any(term in metric_name_lower for term in ["marge", "ebit/ca"]):
-            metric_key = "EBIT_CA"
-        else:
-            metric_key = "CA"
-        if metric_key not in METRIC_TOKENS:
-            st.warning(f"Invalid metric_key '{metric_key}' for metric '{metric_name}'. Available: {list(METRIC_TOKENS.keys())}")
-            continue
-        for i, entity in enumerate(entities):
-            if not isinstance(entity, str) or not entity.strip():
-                continue
-            entity = entity.strip()
-            is_group = entity in group_manager.groups
-            values = []
-            for y in years:
-                if is_group:
-                    value = group_manager.get_group_data(entity, df, metric_key, y)
-                else:
-                    comp_df = safe_find_company(df, entity, COMPANY_COL)
-                    if not comp_df.empty:
-                        col = get_column_for(metric_key, y)
-                        if col and col in comp_df.columns:
-                            value = safe_to_numeric(comp_df.iloc[0][col])
-                        else:
-                            value = np.nan
+        entity = entity.strip()
+        is_group = entity in group_manager.groups
+        values = []
+        for y in years:
+            if is_group:
+                value = group_manager.get_group_data(entity, df, metric_key, y)
+            else:
+                comp_df = safe_find_company(df, entity, COMPANY_COL)
+                if not comp_df.empty:
+                    col = get_column_for(metric_key, y)
+                    if col and col in comp_df.columns:
+                        value = safe_to_numeric(comp_df.iloc[0][col])
                     else:
                         value = np.nan
-                values.append(value)
-            display_name = f"👥 {entity}" if is_group else f"🏢 {entity}"
-            x_offset = np.array(years) + (i - n_entities / 2 + 0.5) * bar_width
-            if "marge" in metric_name_lower:
-                texts = [format_number(v, percent=True) if pd.notna(v) else "" for v in values]
-            else:
-                texts = [format_number(v) for v in values]
-            if entity in color_map:
-                fig.add_trace(go.Bar(
-                    x=x_offset,
-                    y=values,
-                    name=display_name,
-                    marker_color=color_map[entity],
-                    width=bar_width,
-                    text=texts,
-                    textposition="auto",
-                    textfont=dict(size=16),
-                ))
-        yaxis_title = metric_name
-        if "marge" in metric_name_lower:
-            fig.update_yaxes(title_text=f"{yaxis_title} (%)", secondary_y=True)
+                else:
+                    value = np.nan
+            values.append(value)
+        display_name = f"👥 {entity}" if is_group else f"🏢 {entity}"
+        x_offset = np.array(years) + (i - n_entities / 2 + 0.5) * bar_width
+        if metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+            texts = [format_number(v, percent=True) if pd.notna(v) else "" for v in values]
         else:
-            fig.update_yaxes(title_text=yaxis_title)
-        n_years = len(YEARS) - 1
-        fig.add_annotation(
-                        text=f"CAGR: {(calculate_cagr(values[0], values[-1], n_years)*100):.2f}%",
-                        xref="paper", yref="paper", x=0.5, y=1.15,
-                        showarrow=False,
-                        font=dict(size=16, color="black"),
-                        bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
-                        borderwidth=1, borderpad=4,
-                    )
-        fig.update_layout(            title=f"{metric_name} - Comparaison {len(entities)} entités",
-            barmode="group",
-            bargap=0.15,
-            bargroupgap=0.05,
-            height=500,
-            xaxis=dict(tickmode="array", tickvals=years, title="Année", showgrid=False),
-            yaxis=dict(title=yaxis_title, tickformat="~s" if "marge" not in metric_name_lower else ".1%", showgrid=False, visible=False, showticklabels=False),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
-            hovermode="x unified",
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)'
-        )        
-        st.plotly_chart(fig, use_container_width=True)
+            texts = [format_number(v) for v in values]
+        if entity in color_map:
+            fig.add_trace(go.Bar(
+                x=x_offset,
+                y=values,
+                name=display_name,
+                marker_color=color_map[entity],
+                width=bar_width,
+                text=texts,
+                textposition="auto",
+                textfont=dict(size=16),
+            ))
+            if len(values) > 1:
+                valid_values = [v for v in values if pd.notna(v)]
+                if len(valid_values) > 1 and metric_key not in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+                    pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
+                    fig.add_trace(go.Scatter(
+                        x=x_offset,
+                        y=values,
+                        mode="lines+text",
+                        name=f"{display_name} - Var",
+                        line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
+                        text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
+                        textposition="top center",
+                        textfont=dict(size=14),
+                    ))
+    metric_display_name = {
+        "CA": "Chiffre d'affaires",
+        "RE": "Résultat d'exploitation", 
+        "CP": "Charges personnel",
+        "EBIT_CA": "Marge EBIT/CA (%)",
+        "EBIT_CP": "Marge EBIT/CP (%)",
+        "CP_CA": "Marge CP/CA (%)"
+    }
+    yaxis_title = metric_display_name.get(metric_key, metric_key)
+    if metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+        yaxis_title = f"{yaxis_title}"
+        tickformat = ".1%"
+    else:
+        tickformat = "~s"
+    n_years = len(YEARS) - 1
+    fig.update_layout(
+        title=f"{yaxis_title} - Comparaison {len(entities)} entités",
+        barmode="group",
+        bargap=0.15,
+        bargroupgap=0.05,
+        height=500,
+        xaxis=dict(tickmode="array", tickvals=years, title="Année", showgrid=False),
+        yaxis=dict(title=yaxis_title, tickformat=tickformat, showgrid=False, visible=False, showticklabels=False),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+        hovermode="x unified",
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+    st.plotly_chart(fig, use_container_width=True)
 if selected_for_comparison:
     st.markdown(f"### 📈 Comparaison ({len(selected_for_comparison)} entités)")
     col1, col2, col3 = st.columns([1, 8, 1])
@@ -1272,58 +1281,58 @@ if selected_for_comparison:
     if df is not None and not df.empty and comparison_entities:
         plot_enhanced_comparison(df, YEARS, comparison_entities)
     if len(comparison_entities) <= 6:
-        metrics_for_trends = {
-            "Chiffre d'affaires": [get_column_for("CA", y) for y in YEARS if get_column_for("CA", y)],
-            "Résultat d'exploitation": [get_column_for("RE", y) for y in YEARS if get_column_for("RE", y)],
-            "Charges personnel": [get_column_for("CP", y) for y in YEARS if get_column_for("CP", y)],
-        }
-        available_metrics = {k: v for k, v in metrics_for_trends.items() if v and any(c for c in v if c and c in df.columns)}
-        if available_metrics:
-            color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(comparison_entities)}
-            for metric_name, cols_list in available_metrics.items():
-                if "CA" in metric_name or "chiffre" in metric_name.lower():
-                    metric_key = "CA"
-                elif "RE" in metric_name or "resultat" in metric_name.lower():
-                    metric_key = "RE"
-                elif "CP" in metric_name or "charge" in metric_name.lower():
-                    metric_key = "CP"
-                else:
-                    metric_key = "CA"
-                if metric_key not in METRIC_TOKENS:
-                    st.warning(f"Skipping metric '{metric_name}' - invalid metric_key '{metric_key}'")
-                    continue
-                plot_enhanced_multi_metrics(
-                    df=df,
-                    years=YEARS,
-                    entities=comparison_entities,
-                    metric_configs={metric_name: cols_list},
-                    color_map=color_map
-                )
+        metrics_to_plot = ["CA", "RE", "CP", "EBIT_CA", "EBIT_CP", "CP_CA"]
+        color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(comparison_entities)}
+        for metric_key in metrics_to_plot:
+            plot_enhanced_multi_metrics(
+                df=df,
+                years=YEARS,
+                entities=comparison_entities,
+                metric_key=metric_key,
+                color_map=color_map
+            )
         st.markdown("### 📋 Récapitulatif")
         summary_data = []
         for entity in comparison_entities:
             is_group = entity in group_manager.groups
-            row = {"Entité": f"👥 {entity}" if is_group else f"🏢 {entity}", "Type": "Groupe" if is_group else "Entreprise"}
+            row = {"Entité": f"👥 {entity}" if is_group else f"🏢 {entity}",
+                "Type": "Groupe" if is_group else "Entreprise"}
             for y in YEARS:
-                ca_col = get_column_for("CA", y)
                 if is_group:
-                    ca_val = group_manager.get_group_data(entity, df, "CA", y)
-                    re_val = group_manager.get_group_data(entity, df, "RE", y)
+                    ca = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CA", y)
+                    re = aggregate_group_data(group_manager.groups[entity]['companies'], df, "RE", y)
+                    cp = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CP", y)
+                    ebit_ca = (re / ca * 100) if ca != 0 else np.nan
+                    ebit_cp = (re / cp * 100) if cp != 0 else np.nan
+                    cp_ca = (cp / ca * 100) if ca != 0 else np.nan
+
+                    values = {"CA": ca, "RE": re, "CP": cp,
+                            "EBIT_CA": ebit_ca, "EBIT_CP": ebit_cp, "CP_CA": cp_ca}
                 else:
                     comp_df = df[df[COMPANY_COL].str.strip() == entity.strip()]
                     if comp_df.empty:
                         comp_df = df[df[COMPANY_COL].str.lower().str.strip() == entity.lower().strip()]
                     if not comp_df.empty:
-                        ca_val = safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col and ca_col in comp_df.columns else np.nan
-                        re_col = get_column_for("RE", y)
-                        re_val = safe_to_numeric(comp_df.iloc[0][re_col]) if re_col and re_col in comp_df.columns else np.nan
+                        values = {}
+                        for metric in ["CA", "RE", "CP"]:
+                            col = get_column_for(metric, y)
+                            values[metric] = safe_to_numeric(comp_df.iloc[0][col]) if col and col in comp_df.columns else np.nan
+                        values["EBIT_CA"] = (values["RE"] / values["CA"] * 100) if values["CA"] else np.nan
+                        values["EBIT_CP"] = (values["RE"] / values["CP"] * 100) if values["CP"] else np.nan
+                        values["CP_CA"] = (values["CP"] / values["CA"] * 100) if values["CA"] else np.nan
                     else:
-                        ca_val = re_val = np.nan
-                row[f"CA {y}"] = format_number(ca_val) if pd.notna(ca_val) else "N/A"
-                row[f"RE {y}"] = format_number(re_val) if pd.notna(re_val) else "N/A"
+                        values = {metric: np.nan for metric in ["CA","RE","CP","EBIT_CA","EBIT_CP","CP_CA"]}
+                for metric in ["CA","RE","CP","EBIT_CA","EBIT_CP","CP_CA"]:
+                    display_name = f"{metric} {y}"
+                    if metric in ["EBIT_CA","EBIT_CP","CP_CA"]:
+                        row[display_name] = f"{values[metric]:.2f}%" if pd.notna(values[metric]) else "N/A"
+                    else:
+                        row[display_name] = format_number(values[metric]) if pd.notna(values[metric]) else "N/A"
             summary_data.append(row)
+
         summary_df = pd.DataFrame(summary_data)
         st.dataframe(summary_df, use_container_width=True)
+
 else:
     st.info("👆 Sélectionnez des entreprises ou groupes pour voir la comparaison")
 group_manager.save_session()
