@@ -319,6 +319,154 @@ def apply_group_exclusions(df, db_name):
     return df
 df_companies_prepared = apply_group_exclusions(df_companies_prepared, 'companies') if df_companies_prepared is not None else None
 df_kerix_prepared = apply_group_exclusions(df_kerix_prepared, 'kerix') if df_kerix_prepared is not None else None
+def extract_available_years(df_companies, df_kerix):
+    all_years = set()
+    if df_companies is not None:
+        for col in df_companies.columns:
+            if '202' in col and any(char.isdigit() for char in col):
+                year_match = re.search(r'\b(20\d{2})\b', col)
+                if year_match:
+                    all_years.add(int(year_match.group(1)))
+    if df_kerix is not None:
+        for col in df_kerix.columns:
+            if '202' in col and any(char.isdigit() for char in col):
+                year_match = re.search(r'\b(20\d{2})\b', col)
+                if year_match:
+                    all_years.add(int(year_match.group(1)))
+    return sorted(list(all_years)) if all_years else [2023]
+available_years = extract_available_years(df_companies, df_kerix)
+st.sidebar.title("📅 Filtres Année")
+if len(available_years) > 1:
+    year_mode = st.sidebar.radio("Mode de filtrage année", ["Toutes les années", "Sélectionner des années"], key="year_mode")
+    if year_mode == "Sélectionner des années":
+        selected_years = st.sidebar.multiselect("Années", options=available_years, default=available_years[-3:] if len(available_years) >= 3 else available_years)
+    else:
+        selected_years = available_years
+else:
+    selected_years = available_years
+    st.sidebar.info(f"Données disponibles pour {selected_years[0]}")
+def get_year_revenue_columns(df, selected_years):
+    if df is None:
+        return None
+    year_cols = {}
+    revenue_base = ["Chiffre d'affaires", "Chiffre d'Affaires"]
+    operating_base = ["Resultat d'exploitation", "Résultat d'exploitation"]
+    for year in selected_years:
+        rev_candidates = [f"{base} {year} (Dhs)" for base in revenue_base] + [f"{base} {year}" for base in revenue_base]
+        op_candidates = [f"{base} {year} (Dhs)" for base in operating_base] + [f"{base} {year}" for base in operating_base]
+        rev_col = get_col(df, rev_candidates)
+        op_col = get_col(df, op_candidates)
+        year_cols[year] = {'revenue': rev_col, 'operating': op_col}
+    return year_cols
+
+def extract_seed_tokens(seed_series):
+    prods = ""
+    for k in ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"]:
+        if k in seed_series.index and pd.notna(seed_series.get(k)):
+            prods = seed_series.get(k)
+            break
+    if prods == "":
+        prods = seed_series.get("Produits / Services", "") or seed_series.get("products", "") or ""
+    return split_tokens(prods)
+
+def prepare_df_with_years(df, selected_years, is_companies=False):
+    if df is None:
+        return None, {}
+    df = df.copy()
+    info = {}
+    year_cols = get_year_revenue_columns(df, selected_years)
+    if not year_cols:
+        return prepare_df(df, is_companies), info
+    primary_year = max(selected_years)
+    primary_rev_col = year_cols[primary_year]['revenue']
+    if primary_rev_col:
+        df['_revenue_raw'] = df[primary_rev_col]
+        info['revenue_col'] = primary_rev_col
+    else:
+        revenue_candidates = [
+            "Chiffre d'affaires 2023 (Dhs)", "Chiffre d'affaires 2023 (Dhs) ", "Chiffre d'affaires 2023",
+            "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) "
+        ]
+        rev_col = get_col(df, revenue_candidates)
+        info['revenue_col'] = rev_col
+        if rev_col:
+            df['_revenue_raw'] = df[rev_col]
+        else:
+            for c in df.columns:
+                if 'chiffre' in c.lower():
+                    rev_col = c
+                    df['_revenue_raw'] = df[c]
+                    info['revenue_col'] = rev_col
+                    break
+    if '_revenue_raw' not in df.columns:
+        df['_revenue_raw'] = np.nan
+    mins = []
+    maxs = []
+    for v in df['_revenue_raw'].fillna("").astype(str).tolist():
+        mi, ma = parse_revenue_text(v)
+        mins.append(mi)
+        maxs.append(ma)
+    df['_revenue_min'] = pd.Series(mins, dtype='float64')
+    df['_revenue_max'] = pd.Series(maxs, dtype='float64')
+    primary_op_col = year_cols[primary_year]['operating']
+    if primary_op_col:
+        df['_operating_income'] = pd.to_numeric(df[primary_op_col], errors='coerce').fillna(0)
+        info['operating_col'] = primary_op_col
+    else:
+        operating_candidates = [
+            "Resultat d'exploitation 2023 (Dhs)", "Resultat d'exploitation 2023 (Dhs) ", "Resultat d'exploitation 2023",
+            "Resultat d'exploitation", "Resultat d'exploitation", "Resultat d'exploitation 2023 (Dhs)", "Résultat d'exploitation 2023 (Dhs) "
+        ]
+        op_col = get_col(df, operating_candidates)
+        if op_col:
+            df['_operating_income'] = pd.to_numeric(df[op_col], errors='coerce').fillna(0)
+            info['operating_col'] = op_col
+        else:
+            df['_operating_income'] = 0.0
+    city_candidates = ["Ville RC", "Ville", "City", "Localisation", "Siège social"]
+    city_col = get_col(df, city_candidates)
+    if city_col:
+        df['_city'] = df[city_col].fillna("").astype(str)
+    else:
+        df['_city'] = ""
+    sector_candidates = ["Secteur", "Sector", "Activité principale", "Branche"]
+    sector_col = get_col(df, sector_candidates)
+    if sector_col:
+        df['_sector'] = df[sector_col].fillna("").astype(str)
+    else:
+        df['_sector'] = ""
+    if is_companies:
+        name_candidates = ["Raison Sociale (Kerix)", "Raison Sociale (Maroc1000 Nouvelle)", "Raison Sociale (Maroc1000 ancienne)", "Raison Sociale", "Raison Sociale (Maroc1000)"]
+        existing = [c for c in name_candidates if c in df.columns]
+        info['name_candidates'] = existing
+        def fallback_row_name(row):
+            for c in existing:
+                val = row.get(c)
+                if pd.notna(val) and str(val).strip() != "":
+                    return str(val)
+            return ""
+        df['_display_name'] = df.apply(fallback_row_name, axis=1)
+    else:
+        name_candidates_k = ["Raison Sociale", "Raison Sociale "]
+        existing_k = [c for c in name_candidates_k if c in df.columns]
+        info['name_candidates'] = existing_k
+        if existing_k:
+            primary = existing_k[0]
+            df['_display_name'] = df[primary].fillna("").astype(str)
+        else:
+            txt_cols = [c for c in df.columns if df[c].dtype == object]
+            df['_display_name'] = df[txt_cols[0]].fillna("").astype(str) if txt_cols else ""
+    products_col = get_col(df, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
+    if products_col:
+        df['_products'] = df[products_col].fillna("").astype(str)
+    else:
+        df['_products'] = ""
+    info['products_col'] = products_col
+    info['year_cols'] = year_cols
+    info['selected_years'] = selected_years
+    return df, info
+df_companies_prepared, info_companies = prepare_df_with_years(df_companies, selected_years, is_companies=True) if df_companies is not None else (None, {})
+df_kerix_prepared, info_kerix = prepare_df_with_years(df_kerix, selected_years, is_companies=False) if df_kerix is not None else (None, {})
 combined_revs_min = []
 combined_revs_max = []
 if df_companies_prepared is not None:
@@ -457,20 +605,18 @@ elif search_mode == "Groupe d'entreprises":
     if selected_group:
         group_data = st.session_state.groups[selected_group]
         if isinstance(group_data, dict):
-            # FIX: Don't set "Produits / Services" in seed_row (unnecessary for groups)
             seed_row = pd.Series({
                 "name": group_data.get('name', selected_group),
                 "_display_name": group_data.get('display_name', group_data.get('name', selected_group))
             })
             seed_name_for_exclusion = group_data.get('display_name', group_data.get('name', selected_group))
-            # FIX: Directly split the pre-joined products string (already tokenized/deduped in join_products_for_group)
-            # No need for split_tokens here—it can't handle " | ", but we know the format
             joined_prods = group_data.get('products', '')
             seed_prods = [t.strip().lower() for t in joined_prods.split(' | ') if t.strip()]
 st.subheader("Filtres")
 use_ca_filter = st.checkbox("Activer filtre CA (Chiffre d'affaires)", value=False)
 if use_ca_filter:
     st.markdown(f"##### Filtre CA - Min: {compact_num(global_min)} | Max: {compact_num(global_max)}")
+    st.markdown(f"**Année(s) utilisée(s) pour CA:** {', '.join(map(str, selected_years))}")
     min_val = max(0.0, global_min)
     max_val = max(min_val + 1.0, global_max)
     range_span = max_val - min_val
@@ -511,6 +657,7 @@ if use_re_filter:
     else:
         re_min_val, re_max_val = 0.0, 1_000_000.0
     st.markdown(f"##### Filtre Résultat d'exploitation - Min: {compact_num(re_min_val)} | Max: {compact_num(re_max_val)}")
+    st.markdown(f"**Année(s) utilisée(s) pour RE:** {', '.join(map(str, selected_years))}")
     re_range = re_max_val - re_min_val
     re_step = 10 ** (int(np.floor(np.log10(max(1.0, abs(re_range)))) - 1))
     re_step = max(1.0, re_step)
@@ -554,19 +701,7 @@ selected_sectors = st.multiselect("Secteurs", options=sector_options, default=[]
 if seed_row is None:
     st.warning("Sélectionnez ou créez une société seed pour lancer les recherches.")
     st.stop()
-# FIX: Remove this line (replaced by branch-specific computation above)
-# def extract_seed_tokens(seed_series):  # Keep the function definition for singles/manual
-def extract_seed_tokens(seed_series):
-    prods = ""
-    for k in ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"]:
-        if k in seed_series.index and pd.notna(seed_series.get(k)):
-            prods = seed_series.get(k)
-            break
-    if prods == "":
-        prods = seed_series.get("Produits / Services", "") or seed_series.get("products", "") or ""
-    return split_tokens(prods)
-# FIX: Remove this line (seed_prods is now set in branches)
-# seed_prods = extract_seed_tokens(seed_row)
+
 st.subheader("B. Algorithme Concurrentiel")
 tabs = st.tabs(["Base totale", "Kerix", "Paramètres"])
 with tabs[2]:
@@ -622,6 +757,10 @@ def compute_matches_for_df(df, label):
     display_cols.append('_City_display')
     candidates['_Sector_display'] = candidates['_sector']
     display_cols.append('_Sector_display')
+    if 'selected_years' in info_companies if label == "Base totale" else 'selected_years' in info_kerix:
+        years_str = ', '.join(map(str, selected_years))
+        candidates['_Year_display'] = f"Données {years_str}"
+        display_cols.append('_Year_display')
     return candidates, display_cols
 with tabs[0]:
     st.markdown("### Onglet: Base totale")
@@ -643,6 +782,8 @@ with tabs[0]:
                 '_City_display': "Ville",
                 '_Sector_display': "Secteur"
             }
+            if '_Year_display' in display_cols:
+                rename_map['_Year_display'] = "Année(s) des données"
             st.dataframe(candidates.head(int(top_n_preview))[display_cols].fillna("").rename(columns=rename_map))
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine="openpyxl") as writer:
@@ -669,6 +810,8 @@ with tabs[1]:
                 '_City_display': "Ville",
                 '_Sector_display': "Secteur"
             }
+            if '_Year_display' in display_cols_k:
+                rename_map['_Year_display'] = "Année(s) des données"
             st.dataframe(candidates_k.head(int(top_n_preview))[display_cols_k].fillna("").rename(columns=rename_map))
             out_k = io.BytesIO()
             with pd.ExcelWriter(out_k, engine="openpyxl") as writer:
