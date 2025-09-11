@@ -8,6 +8,171 @@ import plotly.express as px
 from difflib import get_close_matches
 import json
 import colorsys
+import io
+import re
+from typing import List, Tuple, Dict, Any
+
+try:
+    from rapidfuzz import fuzz
+    def fuzzy_ratio(a: str, b: str) -> float:
+        a = str(a or "").lower()
+        b = str(b or "").lower()
+        if not a or not b:
+            return 0.0
+        return fuzz.token_sort_ratio(a, b) / 100.0
+except Exception:
+    import difflib
+    def fuzzy_ratio(a: str, b: str) -> float:
+        a = str(a or "").lower()
+        b = str(b or "").lower()
+        if not a or not b:
+            return 0.0
+        return difflib.SequenceMatcher(None, a, b).ratio()
+
+def split_tokens(text: str) -> List[str]:
+    if pd.isna(text):
+        return []
+    s = str(text)
+    SEP = "<<<SPLIT>>>"
+    s_chars = list(s)
+    i = 0
+    while i < len(s_chars):
+        if s_chars[i] == ",":
+            j = i + 1
+            while j < len(s_chars) and s_chars[j].isspace():
+                j += 1
+            if j < len(s_chars) and s_chars[j].isupper():
+                s_chars[i] = SEP
+        i += 1
+    s2 = "".join(s_chars)
+    parts = s2.split(SEP)
+    cleaned = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        p2 = re.sub(r'[\(\)\[\]\d\:.\u2022]+', '', p)
+        p2 = re.sub(r'\s+', ' ', p2).strip()
+        p2 = re.sub(r'^[\-\–\—\.;:]+', '', p2)
+        p2 = re.sub(r'[\-\–\—\.;:]+$', '', p2)
+        p2 = p2.strip().lower()
+        if p2:
+            cleaned.append(p2)
+    seen = set()
+    out = []
+    for v in cleaned:
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: float) -> Tuple[int, int]:
+    if not seed_tokens:
+        return 0, 0
+    matched = 0
+    for s in seed_tokens:
+        for c in cand_tokens:
+            if fuzzy_ratio(s, c) >= threshold:
+                matched += 1
+                break
+    return matched, len(seed_tokens)
+
+def frac_str(m: int, t: int) -> str:
+    if t == 0:
+        return "0/0 (N/A)"
+    ratio = m / max(1, t)
+    return f"{int(m)}/{int(t)} ({ratio:.2f})"
+
+def extract_products_column(df):
+    products_candidates = ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits", "Activités", "Services"]
+    for col in products_candidates:
+        if col in df.columns:
+            return col
+    for col in df.columns:
+        if df[col].dtype == 'object' and 'produ' in col.lower():
+            return col
+    return None
+
+def get_company_products(df, company_name, company_col):
+    if company_name not in df[company_col].values:
+        return []
+    
+    company_row = df[df[company_col] == company_name].iloc[0]
+    products_col = extract_products_column(df)
+    
+    if products_col and products_col in company_row.index:
+        products_text = str(company_row[products_col])
+        return split_tokens(products_text)
+    return []
+
+def find_closest_companies(df, seed_company, company_col, products_col, threshold=0.6, top_n=2):
+    if seed_company not in df[company_col].values:
+        return []
+    
+    seed_row = df[df[company_col] == seed_company].iloc[0]
+    seed_products = split_tokens(str(seed_row[products_col])) if products_col and products_col in seed_row.index else []
+    
+    if not seed_products:
+        return []
+
+    similarities = []
+    for _, row in df.iterrows():
+        if row[company_col] == seed_company:
+            continue
+        
+        candidate_products = split_tokens(str(row[products_col])) if products_col and products_col in row.index else []
+        matched, total = count_similar(seed_products, candidate_products, threshold)
+        similarity_score = matched / max(1, total) if total > 0 else 0.0
+        
+        similarities.append({
+            'company': row[company_col],
+            'similarity_score': similarity_score,
+            'matched_count': matched,
+            'total_count': total,
+            'seed_products': seed_products,
+            'candidate_products': candidate_products
+        })
+    similarities.sort(key=lambda x: x['similarity_score'], reverse=True)
+    return similarities[:top_n]
+
+def find_closest_companies_to_group(df, group_companies, company_col, products_col, threshold=0.6, top_n=2):
+    if not group_companies:
+        return []
+    
+    group_products = []
+    for company in group_companies:
+        if company in df[company_col].values:
+            company_row = df[df[company_col] == company].iloc[0]
+            company_prods = split_tokens(str(company_row[products_col])) if products_col and products_col in company_row.index else []
+            group_products.extend(company_prods)
+    group_products = list(set(group_products))
+    
+    if not group_products:
+        return []
+    
+    similarities = []
+    group_set = set(group_companies)
+    
+    for _, row in df.iterrows():
+        candidate_company = row[company_col]
+        if candidate_company in group_set:
+            continue
+        
+        candidate_products = split_tokens(str(row[products_col])) if products_col and products_col in row.index else []
+        matched, total = count_similar(group_products, candidate_products, threshold)
+        similarity_score = matched / max(1, total) if total > 0 else 0.0
+        
+        similarities.append({
+            'company': candidate_company,
+            'similarity_score': similarity_score,
+            'matched_count': matched,
+            'total_count': total,
+            'seed_products': group_products,
+            'candidate_products': candidate_products
+        })
+    similarities.sort(key=lambda x: x['similarity_score'], reverse=True)
+    return similarities[:top_n]
+
 METRIC_TOKENS = {
     "CA": ["chiffre", "affaires"],
     "RE": ["resultat", "exploitation"],
@@ -16,7 +181,9 @@ METRIC_TOKENS = {
     "EBIT_CP": ["marge", "ebit", "cp"],
     "CP_CA": ["marge", "cp", "ca"],
 }
+
 st.set_page_config(page_title="Analyse Des Entreprises", layout="wide", initial_sidebar_state="expanded")
+
 st.markdown("""
     <style>
     .block-container {padding: 1.2rem;}
@@ -37,17 +204,35 @@ st.markdown("""
     }
     .stMultiSelect > label {font-weight: bold;}
     .group-creation {background-color: #e3f2fd; padding: 1rem; border-radius: 8px; margin: 1rem 0;}
+    .suggestion-card {
+        background-color: #e8f5e8;
+        padding: 0.8rem;
+        border-radius: 6px;
+        border-left: 4px solid #28a745;
+        margin: 0.5rem 0;
+    }
+    .similarity-score {
+        background-color: #fff3cd;
+        padding: 0.3rem 0.6rem;
+        border-radius: 4px;
+        font-weight: bold;
+        color: #856404;
+    }
     label[for="radio-Mode d'affichage"] > div[data-testid="stMarkdownContainer"] p {
         font-size: 20px !important;
         font-weight: 600 !important;
     }
     </style>
 """, unsafe_allow_html=True)
+
 st.title("🏢 Analyse Des Entreprises")
+
 DATA_PATH = "companies.xlsx"
+
 @st.cache_data(ttl=300)
 def load_excel(path):
     return pd.read_excel(path)
+
 def format_number(v, percent=False):
     if pd.isna(v):
         return ""
@@ -59,7 +244,9 @@ def format_number(v, percent=False):
         return f"{v/1e6:.2f} M"
     else:
         return f"{v:,.0f}"
+
 COMPANY_COL = None
+
 def safe_find_company(df, company_name, company_col):
     if not isinstance(company_name, str) or not company_name.strip():
         return pd.DataFrame()
@@ -90,6 +277,7 @@ def safe_find_company(df, company_name, company_col):
     except Exception as e:
         st.warning(f"Error in fuzzy matching for '{company_name}': {e}")
     return pd.DataFrame()
+
 def aggregate_group_data(group_entities, df, metric_key, year):
     if df is None or df.empty:
         return np.nan
@@ -156,6 +344,7 @@ def aggregate_group_data(group_entities, df, metric_key, year):
                 return np.mean([cp/ca if ca != 0 else np.nan for cp, ca in zip(cp_vals, ca_vals)])
         return np.nan
     return sum(valid_values) if valid_values else np.nan
+
 def create_group_representation(group_entities, company_name_map=None):
     if company_name_map is None:
         company_name_map = {}
@@ -179,6 +368,7 @@ def create_group_representation(group_entities, company_name_map=None):
             </div>
             """
     return html_content
+
 def flatten_group_entities(group_entities):
     companies = []
     for entity in group_entities:
@@ -187,10 +377,12 @@ def flatten_group_entities(group_entities):
         elif isinstance(entity, str):
             companies.append(entity)
     return companies
+
 class GroupManager:
     def __init__(self):
         self.groups = {}
         self.company_to_group = {}
+    
     def create_group(self, name, companies=None):
         if companies is None:
             companies = []
@@ -201,6 +393,7 @@ class GroupManager:
         self.groups[name] = {'name': name, 'companies': clean_companies}
         for company in clean_companies:
             self.company_to_group[company] = name
+    
     def get_group_data(self, group_name, df, metric_key, year):
         if df is None or df.empty:
             return np.nan
@@ -218,13 +411,16 @@ class GroupManager:
                 clean_companies.append(company.strip())
         group['companies'] = clean_companies
         return aggregate_group_data(clean_companies, df, metric_key, year)
+    
     def get_all_groups(self):
         return list(self.groups.keys())
+    
     def save_session(self):
         st.session_state.groups = {
             'groups': self.groups,
             'company_to_group': self.company_to_group
         }
+    
     def load_session(self):
         if 'groups' in st.session_state:
             self.groups = st.session_state.groups.get('groups', {})
@@ -238,10 +434,13 @@ class GroupManager:
                         if isinstance(company, str) and company.strip():
                             clean_companies.append(company.strip())
                     group_data['companies'] = clean_companies
+
 if 'group_manager' not in st.session_state:
     st.session_state.group_manager = GroupManager()
+
 group_manager = st.session_state.group_manager
 group_manager.load_session()
+
 def plot_multi_metric(
     df,
     years,
@@ -314,6 +513,7 @@ def plot_multi_metric(
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
+
 df = None
 if os.path.exists(DATA_PATH):
     try:
@@ -321,6 +521,7 @@ if os.path.exists(DATA_PATH):
     except Exception as e:
         st.error(f"Erreur lecture {DATA_PATH}: {e}")
         df = None
+
 if df is None:
     uploaded_file = st.file_uploader("📂 Téléversez le fichier Excel (si 'companies.xlsx' absent)", type=["xlsx"])
     if uploaded_file:
@@ -328,8 +529,10 @@ if df is None:
     else:
         st.info("📁 Aucune donnée chargée. Téléversez un fichier ou placez 'companies.xlsx' dans le dossier de l'app.")
         st.stop()
+
 cols = list(df.columns)
 cols_lower = [c.lower() for c in cols]
+
 def find_col(keyword_tokens, year=None):
     if not isinstance(keyword_tokens, (list, tuple)):
         keyword_tokens = [str(keyword_tokens)]
@@ -341,6 +544,7 @@ def find_col(keyword_tokens, year=None):
             if year is None or str(year) in cl:
                 return col
     return None
+
 def get_column_for(metric_key, year):
     if metric_key not in METRIC_TOKENS:
         st.warning(f"Invalid metric_key '{metric_key}'. Available metrics: {list(METRIC_TOKENS.keys())}")
@@ -350,10 +554,12 @@ def get_column_for(metric_key, year):
     if not col and year is not None:
         col = find_col(tokens, None)
     return col
+
 YEARS = [2020, 2021, 2022, 2023]
 SECTOR_COL = None
 COMPANY_COL = None
 COMPANY_COL2 = None
+
 for c in cols:
     lc = c.lower()
     if "secteur" in lc:
@@ -362,9 +568,11 @@ for c in cols:
         COMPANY_COL = c
     if ("raison" in lc and "nouvelle" in lc):
         COMPANY_COL2 = c
+
 if COMPANY_COL is None:
     string_cols = [c for c in cols if df[c].dtype == object]
     COMPANY_COL = string_cols[0] if string_cols else cols[0]
+
 if SECTOR_COL is None:
     for c in cols:
         if "secteur" in c.lower():
@@ -372,13 +580,16 @@ if SECTOR_COL is None:
 if SECTOR_COL is None:
     df['Secteur'] = 'Tous'
     SECTOR_COL = 'Secteur'
+
 st.sidebar.header("🔍 Filtres")
 sector_list = list(df[SECTOR_COL].dropna().unique())
 sector_choice = st.sidebar.selectbox("🏣 Sélectionner un secteur", ["Tous"] + sorted(sector_list))
 metric_display_year = st.sidebar.selectbox("Année pour affichages (top / parts de marché)", YEARS, index=3)
 top_n = st.sidebar.number_input("Nombre d'entreprises à afficher", min_value=3, max_value=200, value=10, step=1)
+
 def safe_to_numeric(series):
     return pd.to_numeric(series, errors='coerce')
+
 def build_metric_matrix(df_input, metric_key):
     if df_input is None or df_input.empty:
         return pd.DataFrame(), {}
@@ -398,10 +609,12 @@ def build_metric_matrix(df_input, metric_key):
         else:
             matrix[str(y)] = np.nan
     return matrix, cols_found
+
 if sector_choice == "Tous":
     sector_df = df
 else:
     sector_df = df[df[SECTOR_COL] == sector_choice]
+
 def compute_company_cagrs(df_input, metric_key):
     try:
         if df_input is None or df_input.empty:
@@ -426,6 +639,7 @@ def compute_company_cagrs(df_input, metric_key):
     except Exception as e:
         st.error(f"Error computing CAGR for {metric_key}: {e}")
         return []
+
 cagr_results = {}
 cagr_display = []
 for key in ["CA", "RE", "CP"]:
@@ -440,7 +654,9 @@ for key in ["CA", "RE", "CP"]:
         st.error(f"Failed to compute CAGR for {key}: {e}")
         cagr_results[key] = np.nan
         cagr_display.append((key, np.nan, 0))
+
 st.markdown("---")
+
 def calculate_cagr(start, end, periods):
     try:
         start = float(start) if pd.notna(start) else 0.0
@@ -456,6 +672,7 @@ def calculate_cagr(start, end, periods):
         return float(cagr)
     except Exception:
         return 0.0
+
 st.markdown("### 👥 Gestion des Groupes")
 with st.container():
     col1, col2 = st.columns([3, 1])
@@ -470,6 +687,7 @@ with st.container():
                 st.rerun()
             else:
                 st.error("❌ Nom de groupe déjà utilisé")
+
 if group_manager.groups:
     for group_name in group_manager.get_all_groups():
         with st.expander(f"👥 {group_name}", expanded=False):
@@ -538,10 +756,12 @@ if group_manager.groups:
                     group_manager.save_session()
                     st.success(f"✅ Groupe '{group_name}' supprimé!")
                     st.rerun()
+
 grouped_companies = set()
 for key in list(group_manager.company_to_group.keys()):
     if isinstance(key, str) and key.strip():
         grouped_companies.add(key.strip())
+
 display_mode = st.radio("Mode d'affichage", ["Entreprise individuelle", "Groupe d'entreprises"], key="radio-Mode d'affichage")
 if display_mode == "Entreprise individuelle":
     st.subheader("A. Vue entreprise individuelle")
@@ -773,6 +993,7 @@ if display_mode == "Entreprise individuelle":
                 if col != COMPANY_COL:
                     df_to_display[col] = df_to_display[col].apply(lambda v: format_value(v, str(col)))
             st.dataframe(df_to_display.T.rename(columns={comp_df.index[0]: company_single}), use_container_width=True)
+
 elif display_mode == "Groupe d'entreprises":
     st.subheader("A. Vue groupe d'entreprises")
     existing_groups = group_manager.get_all_groups()
@@ -1007,33 +1228,172 @@ elif display_mode == "Groupe d'entreprises":
                 st.dataframe(df_group_formatted, use_container_width=True)
     else:
         st.info("Aucun groupe créé. Utilisez le formulaire ci-dessus pour en créer un.")
+
 st.markdown("---")
 st.subheader("B. Vue entreprise comparative")
 brand_colors = ["#052449", "#0064EF", "#428DF2", "#375F92", "#003967", "#FF6B6B", "#4ECDC4", "#45B7D1"]
+
+products_col = extract_products_column(df)
+if not products_col:
+    st.warning("⚠️ Colonne produits/services non trouvée. Les suggestions automatiques ne seront pas disponibles.")
+
 available_individual_companies = [
     c.strip() for c in sorted(df[COMPANY_COL].dropna().astype(str).str.strip().unique())
     if c.strip() not in grouped_companies
 ]
-st.markdown("##### 🔄 Sélection pour comparaison")
-all_comparison_options = available_individual_companies + [f"👥 {g}" for g in sorted(group_manager.get_all_groups())]
-selected_for_comparison = st.multiselect(
-    "Entreprises ET groupes à comparer:",
-    all_comparison_options,
-    placeholder="Choisissez ce que vous voulez comparer...",
-    help="Mélangez entreprises individuelles et groupes"
-)
-comparison_entities = []
-for entity in selected_for_comparison:
-    if entity.startswith("👥 "):
-        group_name = entity[2:].strip()
-        if group_name:
-            comparison_entities.append(group_name)
+
+st.markdown("##### 🔄 Sélection intelligente pour comparaison")
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    primary_selection_type = st.radio(
+        "Choisir une entreprise principale pour suggestions automatiques:",
+        ["Entreprise individuelle", "Groupe existant"],
+        key="primary_selection_type"
+    )
+
+primary_entity = None
+primary_entity_name = None
+primary_is_group = False
+
+if primary_selection_type == "Entreprise individuelle":
+    if available_individual_companies:
+        primary_entity = st.selectbox(
+            "Sélectionnez l'entreprise principale:",
+            ["Aucune"] + available_individual_companies,
+            key="primary_company"
+        )
+        if primary_entity != "Aucune":
+            primary_entity_name = primary_entity
     else:
-        entity_clean = entity.strip()
-        if entity_clean:
-            comparison_entities.append(entity_clean)
+        st.info("Aucune entreprise disponible pour sélection.")
+else:
+    existing_groups = group_manager.get_all_groups()
+    if existing_groups:
+        primary_group = st.selectbox(
+            "Sélectionnez le groupe principal:",
+            ["Aucun"] + existing_groups,
+            key="primary_group"
+        )
+        if primary_group != "Aucun":
+            primary_entity_name = primary_group
+            primary_is_group = True
+    else:
+        st.info("Aucun groupe disponible.")
+
+suggested_companies = []
+suggestion_threshold = 0.75
+
+if primary_entity_name and products_col:
+    with st.container():
+        st.markdown("### 🎯 Suggestions automatiques")
+        st.markdown("**Entreprises les plus similaires basées sur les produits/services:**")
+        
+        if not primary_is_group:
+            suggested_companies = find_closest_companies(
+                df, primary_entity_name, COMPANY_COL, products_col, 
+                threshold=suggestion_threshold, top_n=2
+            )
+        else:
+            group_companies = group_manager.groups[primary_entity_name].get('companies', [])
+            suggested_companies = find_closest_companies_to_group(
+                df, group_companies, COMPANY_COL, products_col,
+                threshold=suggestion_threshold, top_n=2
+            )
+        
+        if suggested_companies:
+            for i, suggestion in enumerate(suggested_companies, 1):
+                with st.container():
+                    col_s1, col_s2, col_s3 = st.columns([3, 1, 2])
+                    with col_s1:
+                        st.markdown(f"**🏢 {suggestion['company']}**")
+                    with col_s2:
+                        score_class = "similarity-score"
+                        st.markdown(f"""
+                        <div class="{score_class}">
+                            {suggestion['similarity_score']:.1%} 
+                            ({suggestion['matched_count']}/{suggestion['total_count']})
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col_s3:
+                        if st.button(f"➕ Ajouter à la comparaison", key=f"add_suggestion_{i}"):
+                            st.session_state.comparison_suggestions = st.session_state.get('comparison_suggestions', []) + [suggestion['company']]
+                            st.success(f"{suggestion['company']} ajouté à la comparaison!")
+                            st.rerun()
+            
+            with st.expander("🔍 Détails des suggestions (produits correspondants)"):
+                for suggestion in suggested_companies:
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.write(f"**Entreprise principale:** {primary_entity_name}")
+                        st.write(f"Produits: {', '.join(suggestion['seed_products'][:5])}...")
+                    with col_d2:
+                        st.write(f"**Entreprise suggérée:** {suggestion['company']}")
+                        st.write(f"Produits: {', '.join(suggestion['candidate_products'][:5])}...")
+                    st.write(f"**Produits en commun détectés:** {suggestion['matched_count']}/{suggestion['total_count']}")
+                    st.divider()
+        else:
+            st.info("❌ Aucune entreprise similaire trouvée avec le seuil actuel.")
+            if st.button("🔧 Baisser le seuil de similarité (0.3)"):
+                suggested_companies = find_closest_companies(
+                    df, primary_entity_name, COMPANY_COL, products_col, 
+                    threshold=0.3, top_n=2
+                ) if not primary_is_group else find_closest_companies_to_group(
+                    df, group_manager.groups[primary_entity_name]['companies'], 
+                    COMPANY_COL, products_col, threshold=0.3, top_n=2
+                )
+                if suggested_companies:
+                    st.rerun()
+
+with col2:
+    st.markdown("### 📋 Suggestions ajoutées")
+    if 'comparison_suggestions' in st.session_state:
+        added_suggestions = st.session_state.comparison_suggestions
+        for i, company in enumerate(added_suggestions):
+            col_a1, col_a2 = st.columns([3, 1])
+            with col_a1:
+                st.write(f"✅ {company}")
+            with col_a2:
+                if st.button("❌", key=f"remove_suggestion_{i}"):
+                    st.session_state.comparison_suggestions.pop(i)
+                    st.rerun()
+    else:
+        st.info("Aucune suggestion ajoutée")
+
+st.markdown("---")
+manual_selection = st.checkbox("🔧 Ou sélectionner manuellement d'autres entreprises/groupes", value=False)
+
+comparison_entities = []
+if manual_selection:
+    all_comparison_options = available_individual_companies + [f"👥 {g}" for g in sorted(group_manager.get_all_groups())]
+    manual_selections = st.multiselect(
+        "Entreprises ET groupes à comparer (manuel):",
+        all_comparison_options,
+        placeholder="Choisissez manuellement...",
+        key="manual_comparison"
+    )
+    for entity in manual_selections:
+        if entity.startswith("👥 "):
+            group_name = entity[2:].strip()
+            if group_name:
+                comparison_entities.append(group_name)
+        else:
+            entity_clean = entity.strip()
+            if entity_clean:
+                comparison_entities.append(entity_clean)
+else:
+    if 'comparison_suggestions' in st.session_state:
+        comparison_entities = st.session_state.comparison_suggestions.copy()
+    if primary_entity_name and primary_entity_name not in comparison_entities:
+        comparison_entities.append(primary_entity_name)
+
+if not comparison_entities and not manual_selection:
+    st.info("👆 Sélectionnez une entreprise principale pour obtenir des suggestions automatiques, ou activez la sélection manuelle.")
+
 selected_companies = [e for e in comparison_entities if e not in group_manager.groups]
 selected_groups = [e for e in comparison_entities if e in group_manager.groups]
+
 def plot_multi_companies(
     df,
     years,
@@ -1103,6 +1463,7 @@ def plot_multi_companies(
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
+
 def adjust_color_brightness(hex_color, factor=1.2):
     try:
         hex_color = str(hex_color).lstrip("#")
@@ -1113,6 +1474,7 @@ def adjust_color_brightness(hex_color, factor=1.2):
         return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
     except:
         return hex_color
+
 def plot_enhanced_comparison(df, years, entities, color_map=None):
     if not entities or df is None or df.empty:
         st.warning("No valid entities or data available for comparison")
@@ -1144,7 +1506,6 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                     ca_val = np.nan
                 if re_val == 0:
                     re_val = np.nan
-
             else:
                 comp_df = safe_find_company(df, entity, COMPANY_COL)
                 if not comp_df.empty:
@@ -1156,10 +1517,8 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                     ca_val = re_val = np.nan
             ca_vals.append(ca_val)
             re_vals.append(re_val)
-
         margin_vals = [(re / ca) if pd.notna(re) and pd.notna(ca) and ca != 0 else np.nan
                     for re, ca in zip(re_vals, ca_vals)]
-
         base_color = color_map.get(entity, "#636EFA")
         margin_color = adjust_color_brightness(base_color, 0.9)
         fig.add_trace(go.Bar(
@@ -1209,6 +1568,7 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
+
 def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None):
     if not entities or df is None or df.empty:
         return
@@ -1287,7 +1647,7 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                     ))
     metric_display_name = {
         "CA": "Chiffre d'affaires",
-        "RE": "Résultat d'exploitation", 
+        "RE": "Résultat d'exploitation",
         "CP": "Charges personnel",
         "EBIT_CA": "Marge EBIT/CA (%)",
         "EBIT_CP": "Marge EBIT/CP (%)",
@@ -1314,24 +1674,56 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
-if selected_for_comparison:
-    st.markdown(f"### 📈 Comparaison ({len(selected_for_comparison)} entités)")
+
+if comparison_entities:
+    st.markdown(f"### 📈 Comparaison intelligente ({len(comparison_entities)} entités)")
     col1, col2, col3 = st.columns([1, 8, 1])
     with col2:
         entity_info = []
-        for entity in selected_for_comparison:
-            if entity.startswith("👥 "):
-                group_name = entity[2:].strip()
-                if group_name and group_name in group_manager.groups:
-                    count = len([c for c in group_manager.groups[group_name].get('companies', []) if isinstance(c, str)])
-                    entity_info.append(f"👥 {group_name} ({count} entreprises)")
-                else:
-                    entity_info.append(f"👥 {group_name or 'Inconnu'} (0 entreprises)")
+        for entity in comparison_entities:
+            is_group = entity in group_manager.groups
+            if is_group:
+                count = len([c for c in group_manager.groups[entity].get('companies', []) if isinstance(c, str)])
+                entity_info.append(f"👥 {entity} ({count} entreprises)")
             else:
-                entity_info.append(f"🏢 {entity.strip()}")
+                entity_info.append(f"🏢 {entity}")
         st.info(" | ".join(entity_info))
+    
+    if 'comparison_suggestions' in st.session_state and primary_entity_name:
+        st.markdown("**🔍 Scores de similarité des suggestions:**")
+        suggestion_scores = []
+        products_col = extract_products_column(df)
+        if products_col and primary_entity_name:
+            if not primary_is_group:
+                all_similarities = find_closest_companies(
+                    df, primary_entity_name, COMPANY_COL, products_col, 
+                    threshold=0.1, top_n=10
+                )
+            else:
+                group_companies = group_manager.groups[primary_entity_name].get('companies', [])
+                all_similarities = find_closest_companies_to_group(
+                    df, group_companies, COMPANY_COL, products_col,
+                    threshold=0.1, top_n=10
+                )
+            
+            for sim in all_similarities:
+                if sim['company'] in comparison_entities:
+                    suggestion_scores.append({
+                        'company': sim['company'],
+                        'score': sim['similarity_score'],
+                        'matched': sim['matched_count'],
+                        'total': sim['total_count']
+                    })
+            
+            if suggestion_scores:
+                scores_df = pd.DataFrame(suggestion_scores)
+                scores_df['Score'] = scores_df['score'].apply(lambda x: f"{x:.1%}")
+                scores_df['Match'] = scores_df.apply(lambda row: f"{row['matched']}/{row['total']}", axis=1)
+                st.dataframe(scores_df[['company', 'Score', 'Match']].rename(columns={'company': 'Entreprise'}), use_container_width=True)
+    
     if df is not None and not df.empty and comparison_entities:
         plot_enhanced_comparison(df, YEARS, comparison_entities)
+    
     if len(comparison_entities) <= 6:
         metrics_to_plot = ["CA", "RE", "CP", "EBIT_CA", "EBIT_CP", "CP_CA"]
         color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(comparison_entities)}
@@ -1343,12 +1735,13 @@ if selected_for_comparison:
                 metric_key=metric_key,
                 color_map=color_map
             )
-        st.markdown("### 📋 Récapitulatif")
+        
+        st.markdown("### 📋 Récapitulatif comparatif")
         summary_data = []
         for entity in comparison_entities:
             is_group = entity in group_manager.groups
             row = {"Entité": f"👥 {entity}" if is_group else f"🏢 {entity}",
-                "Type": "Groupe" if is_group else "Entreprise"}
+                   "Type": "Groupe" if is_group else "Entreprise"}
             for y in YEARS:
                 if is_group:
                     ca = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CA", y)
@@ -1357,9 +1750,8 @@ if selected_for_comparison:
                     ebit_ca = (re / ca * 100) if ca != 0 else np.nan
                     ebit_cp = (re / cp * 100) if cp != 0 else np.nan
                     cp_ca = (cp / ca * 100) if ca != 0 else np.nan
-
                     values = {"CA": ca, "RE": re, "CP": cp,
-                            "EBIT_CA": ebit_ca, "EBIT_CP": ebit_cp, "CP_CA": cp_ca}
+                              "EBIT_CA": ebit_ca, "EBIT_CP": ebit_cp, "CP_CA": cp_ca}
                 else:
                     comp_df = df[df[COMPANY_COL].str.strip() == entity.strip()]
                     if comp_df.empty:
@@ -1381,10 +1773,55 @@ if selected_for_comparison:
                     else:
                         row[display_name] = format_number(values[metric]) if pd.notna(values[metric]) else "N/A"
             summary_data.append(row)
-
         summary_df = pd.DataFrame(summary_data)
         st.dataframe(summary_df, use_container_width=True)
+        
+        if st.button("📥 Exporter comparaison (avec scores de similarité)"):
+            export_data = summary_df.copy()
+            
+            if 'comparison_suggestions' in st.session_state and primary_entity_name and suggestion_scores:
+                similarity_map = {s['company']: s['score'] for s in suggestion_scores}
+                export_data['Score de similarité'] = export_data['Entité'].apply(
+                    lambda x: similarity_map.get(x.replace('🏢 ', '').replace('👥 ', ''), 'N/A')
+                )
+            if primary_entity_name:
+                export_data['Entité de référence'] = primary_entity_name
+                
+            out = io.BytesIO()
+            with pd.ExcelWriter(out, engine="openpyxl") as writer:
+                export_data.to_excel(writer, sheet_name="Comparaison", index=False)
 
-else:
-    st.info("👆 Sélectionnez des entreprises ou groupes pour voir la comparaison")
+                if suggestion_scores:
+                    sim_df = pd.DataFrame(suggestion_scores)
+                    sim_df.to_excel(writer, sheet_name="Scores_Similarite", index=False)
+
+                    if products_col:
+                        products_data = []
+                        for entity in comparison_entities:
+                            if not entity in group_manager.groups:
+                                comp_df = safe_find_company(df, entity, COMPANY_COL)
+                                if not comp_df.empty:
+                                    products_text = str(comp_df.iloc[0][products_col]) if products_col in comp_df.columns else "N/A"
+                                    products_data.append({
+                                        'Entreprise': entity,
+                                        'Produits/Services': products_text[:500] + "..." if len(products_text) > 500 else products_text
+                                    })
+                        
+                        if products_data:
+                            products_df = pd.DataFrame(products_data)
+                            products_df.to_excel(writer, sheet_name="Produits_Services", index=False)
+            
+            out.seek(0)
+            st.download_button(
+                "📥 Télécharger Excel",
+                data=out,
+                file_name=f"comparaison_{primary_entity_name}_{len(comparison_entities)}_entites.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+if st.button("🗑️ Vider les suggestions automatiques"):
+    if 'comparison_suggestions' in st.session_state:
+        del st.session_state.comparison_suggestions
+    st.rerun()
+
 group_manager.save_session()

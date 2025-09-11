@@ -20,13 +20,16 @@ except Exception:
         if not a or not b:
             return 0.0
         return difflib.SequenceMatcher(None, a, b).ratio()
+
 st.set_page_config(page_title="Search Engine", layout="wide")
 st.title("🔍 Search Engine")
+
 def get_col(df: pd.DataFrame, candidates: List[str]):
     for c in candidates:
         if c in df.columns:
             return c
     return None
+
 def split_tokens(text: str) -> List[str]:
     if pd.isna(text):
         return []
@@ -63,23 +66,21 @@ def split_tokens(text: str) -> List[str]:
             seen.add(v)
             out.append(v)
     return out
+
 def join_products_for_group(products_list: List[str], separator: str = " | ") -> str:
     if not products_list:
         return ""
     all_tokens = []
-    # Loop through each company's products and split using the same logic as individual companies
     for products_str in products_list:
         if pd.isna(products_str) or not str(products_str).strip():
             continue
-        # Use the exact same split_tokens function that works for individual companies
         company_tokens = split_tokens(str(products_str).strip())
         all_tokens.extend(company_tokens)
-    # Create a set to remove duplicates across all companies, then convert back to list
     unique_tokens = list(set(all_tokens))
     if not unique_tokens:
         return ""
-    # Join the unique tokens with the separator
     return separator.join(unique_tokens)
+
 def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: float) -> Tuple[int, int]:
     if not seed_tokens:
         return 0, 0
@@ -90,11 +91,13 @@ def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: flo
                 matched += 1
                 break
     return matched, len(seed_tokens)
+
 def frac_str(m: int, t: int) -> str:
     if t == 0:
         return "0/0 (N/A)"
     ratio = m / max(1, t)
     return f"{int(m)}/{int(t)} ({ratio:.2f})"
+
 def load_or_upload(filename: str, prompt_label: str):
     try:
         df = pd.read_excel(filename)
@@ -111,6 +114,7 @@ def load_or_upload(filename: str, prompt_label: str):
         except Exception as e:
             st.error(f"Erreur en lisant {filename}: {e}")
             return None
+
 def compact_num(n) -> str:
     if pd.isna(n):
         return "N/A"
@@ -131,6 +135,7 @@ def compact_num(n) -> str:
         return f"{n / K:.1f}K"
     else:
         return f"{n:,.0f}"
+
 def format_range_compact(mi, ma) -> str:
     if pd.isna(mi) and pd.isna(ma):
         return "N/A"
@@ -141,6 +146,7 @@ def format_range_compact(mi, ma) -> str:
     if mi == ma:
         return compact_num(mi)
     return f"de {compact_num(mi)} à {compact_num(ma)}"
+
 def parse_revenue_text(s: str) -> Tuple[float, float]:
     if pd.isna(s):
         return np.nan, np.nan
@@ -185,18 +191,21 @@ def parse_revenue_text(s: str) -> Tuple[float, float]:
         val = float(norm_nums[0])
         return val, val
     return np.nan, np.nan
+
 def find_numeric_columns(df: pd.DataFrame) -> List[str]:
     numeric_cols = []
     for col in df.columns:
         if df[col].dtype in ['int64', 'float64'] or (df[col].dtype == 'object' and pd.to_numeric(df[col], errors='coerce').notna().sum() > 0):
             numeric_cols.append(col)
     return numeric_cols
+
 def create_group_display_name(companies_list: List[str]) -> str:
     if not companies_list:
         return "Groupe Vide"
     if len(companies_list) == 1:
         return companies_list[0]
     return f"Groupe ({len(companies_list)} entreprises)"
+
 def create_group_from_selection(selected_companies: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not selected_companies:
         return {}
@@ -227,6 +236,7 @@ df_kerix = load_or_upload("kerix.xlsx", "kerix.xlsx")
 if df_companies is None and df_kerix is None:
     st.error("Au moins une des bases (companies.xlsx ou kerix.xlsx) doit être fournie.")
     st.stop()
+
 def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFrame, dict]:
     df = df.copy()
     info = {}
@@ -310,6 +320,7 @@ if 'groups' not in st.session_state:
     st.session_state.groups = {}
 if 'group_exclusions' not in st.session_state:
     st.session_state.group_exclusions = {'companies': set(), 'kerix': set()}
+
 def apply_group_exclusions(df, db_name):
     if not st.session_state.groups:
         return df
@@ -317,8 +328,10 @@ def apply_group_exclusions(df, db_name):
     if '_display_name' in df.columns:
         df = df[~df['_display_name'].isin(excluded_names)].reset_index(drop=True)
     return df
+
 df_companies_prepared = apply_group_exclusions(df_companies_prepared, 'companies') if df_companies_prepared is not None else None
 df_kerix_prepared = apply_group_exclusions(df_kerix_prepared, 'kerix') if df_kerix_prepared is not None else None
+
 def extract_available_years(df_companies, df_kerix):
     all_years = set()
     if df_companies is not None:
@@ -345,6 +358,7 @@ if len(available_years) > 1:
 else:
     selected_years = available_years
     st.sidebar.info(f"Données disponibles pour {selected_years[0]}")
+
 def get_year_revenue_columns(df, selected_years):
     if df is None:
         return None
@@ -492,6 +506,7 @@ if 'current_search_target' not in st.session_state:
     st.session_state.current_search_target = 'single'
 st.subheader("🏢 Gestion des Groupes d'Entreprises")
 group_tab1, group_tab2 = st.tabs(["Créer un groupe", "Groupes existants"])
+
 with group_tab1:
     new_group_name = st.text_input("Nom du groupe", value=f"Groupe {len(st.session_state.groups) + 1}")
     st.session_state.new_group_name = new_group_name
@@ -535,6 +550,7 @@ with group_tab1:
                 st.session_state.group_exclusions['kerix'].add(company['name']) if df_kerix_prepared is not None else None
         st.success(f"Groupe '{group_data['name']}' créé avec {len(selected_companies)} entreprises!")
         st.rerun()
+
 with group_tab2:
     if st.session_state.groups:
         for group_name, group_data in list(st.session_state.groups.items()):
@@ -565,14 +581,17 @@ with group_tab2:
                             st.rerun()
     else:
         st.info("Aucun groupe créé pour le moment. Utilisez l'onglet de gauche pour en créer un.")
+
 st.subheader("🔍 Moteur de Recherche")
 search_mode = st.radio("Mode de recherche", ["Entreprise unique", "Groupe d'entreprises"], horizontal=True, key="search_mode")
+
 st.session_state.current_search_target = "group" if search_mode == "Groupe d'entreprises" else "single"
 if search_mode == "Groupe d'entreprises" and not st.session_state.groups:
     st.warning("Créez d'abord un groupe dans la section Gestion des Groupes!")
     st.stop()
+
 seed_row = None
-seed_prods = None  # FIX: Initialize to None to avoid undefined errors if no seed selected
+seed_prods = None
 seed_name_for_exclusion = None
 if search_mode == "Entreprise unique":
     if df_kerix_prepared is None:
@@ -583,7 +602,7 @@ if search_mode == "Entreprise unique":
                                         format_func=lambda i: options[i])
         seed_row = df_kerix_prepared.iloc[int(seed_choice_idx)]
         seed_name_for_exclusion = seed_row.get('_display_name', "")
-        seed_prods = extract_seed_tokens(seed_row)  # FIX: Compute here for Kerix single
+        seed_prods = extract_seed_tokens(seed_row)
     non_existant = st.checkbox("Entreprise non existante dans la base", False)
     if non_existant:
         with st.form("manual_seed_form_global"):
@@ -598,7 +617,7 @@ if search_mode == "Entreprise unique":
                 "Produits / Services": ms_products
             })
             seed_name_for_exclusion = ms_name
-            seed_prods = extract_seed_tokens(seed_row)  # FIX: Compute here for manual single
+            seed_prods = extract_seed_tokens(seed_row)
 elif search_mode == "Groupe d'entreprises":
     group_options = list(st.session_state.groups.keys())
     selected_group = st.selectbox("Choisir le groupe seed", group_options)
@@ -612,6 +631,7 @@ elif search_mode == "Groupe d'entreprises":
             seed_name_for_exclusion = group_data.get('display_name', group_data.get('name', selected_group))
             joined_prods = group_data.get('products', '')
             seed_prods = [t.strip().lower() for t in joined_prods.split(' | ') if t.strip()]
+
 st.subheader("Filtres")
 use_ca_filter = st.checkbox("Activer filtre CA (Chiffre d'affaires)", value=False)
 if use_ca_filter:
@@ -682,6 +702,7 @@ if use_re_filter:
     st.markdown(f"Min - Max sélectionné : **{compact_num(re_min_sel)}** - **{compact_num(re_max_sel)}**")
 else:
     re_min_sel, re_max_sel = None, None
+
 st.markdown("##### Filtre Ville")
 all_cities = set()
 if df_companies_prepared is not None:
@@ -690,6 +711,7 @@ if df_kerix_prepared is not None:
     all_cities.update(df_kerix_prepared['_city'].dropna().unique())
 city_options = sorted(list(all_cities))
 selected_cities = st.multiselect("Villes", options=city_options, default=[])
+
 st.markdown("##### Filtre Secteur")
 all_sectors = set()
 if df_companies_prepared is not None:
@@ -698,6 +720,7 @@ if df_kerix_prepared is not None:
     all_sectors.update(df_kerix_prepared['_sector'].dropna().unique())
 sector_options = sorted(list(all_sectors))
 selected_sectors = st.multiselect("Secteurs", options=sector_options, default=[])
+
 if seed_row is None:
     st.warning("Sélectionnez ou créez une société seed pour lancer les recherches.")
     st.stop()
@@ -709,6 +732,7 @@ with tabs[2]:
     prod_threshold = st.slider("Seuil similarité produits/services (fuzzy)", min_value=0.5, max_value=0.95, value=0.75, step=0.01, key="prod_threshold")
     top_n_preview = st.number_input("Top N candidats à afficher", min_value=5, max_value=500, value=25, step=5, key="top_n_preview")
     sort_metric = st.selectbox("Trier par", ["product_fraction"], index=0, key="sort_metric")
+
 def compute_matches_for_df(df, label):
     if df is None:
         return None, None
@@ -762,13 +786,14 @@ def compute_matches_for_df(df, label):
         candidates['_Year_display'] = f"Données {years_str}"
         display_cols.append('_Year_display')
     return candidates, display_cols
+
 with tabs[0]:
     st.markdown("### Onglet: Base totale")
     if df_companies_prepared is None:
         st.warning("Fichier companies.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})  # FIX: Optional debug output to verify tokens (remove if not needed)
+        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})
         candidates, display_cols = compute_matches_for_df(df_companies_prepared, "Base totale")
         if candidates is None or candidates.shape[0] == 0:
             st.info("Aucun candidat trouvé dans la Base totale pour les filtres sélectionnés.")
@@ -790,13 +815,14 @@ with tabs[0]:
                 candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
             out.seek(0)
             st.download_button("📥 Télécharger résultats (Base totale)", data=out, file_name="base_totale_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 with tabs[1]:
     st.markdown("### Onglet: Kerix")
     if df_kerix_prepared is None:
         st.warning("Fichier kerix.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})  # FIX: Optional debug output to verify tokens (remove if not needed)
+        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})
         candidates_k, display_cols_k = compute_matches_for_df(df_kerix_prepared, "Kerix")
         if candidates_k is None or candidates_k.shape[0] == 0:
             st.info("Aucun candidat trouvé dans Kerix pour les filtres sélectionnés.")

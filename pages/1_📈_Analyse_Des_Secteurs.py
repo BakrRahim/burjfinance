@@ -16,7 +16,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
-
 df = load_data()
 columns_to_keep = [
     "Raison Sociale (Maroc1000 Nouvelle)", "Raison Sociale (Maroc1000 ancienne)", "Raison Sociale (Kerix)", "Secteur",
@@ -70,6 +69,56 @@ def calculate_cagr(start, end, periods):
     except Exception:
         return 0.0
 
+def precalculate_sector_cagrs(df):
+    years = [2020, 2021, 2022, 2023]
+    cagr_data = {}
+    
+    financial_vars = {
+        "Chiffre d'affaires": [f"Chiffre d'affaires {y} (Dhs)" for y in years],
+        "Resultat d'exploitation": [f"Resultat d'exploitation {y} (Dhs)" for y in years],
+        "Charges personnel": [f"Charges personnel {y}" for y in years]
+    }
+    
+    margin_vars = {
+        "Marge EBIT/CA": [f"Marge EBIT/CA {y}" for y in years],
+        "Marge EBIT/CP": [f"Marge EBIT/CP {y}" for y in years],
+        "Marge CP/CA": [f"Marge CP/CA {y}" for y in years]
+    }
+    
+    for var_name, cols in financial_vars.items():
+        sector_sums = df.groupby("Secteur")[cols].sum()
+        cagr_data[f"{var_name}_CAGR"] = {}
+        for sector in sector_sums.index:
+            sector_values = sector_sums.loc[sector].values
+            if len(sector_values) == len(years) and not np.all(np.isnan(sector_values)):
+                start_val = sector_values[0]
+                end_val = sector_values[-1]
+                if pd.notna(start_val) and pd.notna(end_val) and start_val > 0:
+                    cagr = calculate_cagr(start_val, end_val, len(years)-1)
+                    cagr_data[f"{var_name}_CAGR"][sector] = cagr
+                else:
+                    cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+            else:
+                cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+    
+    for var_name, cols in margin_vars.items():
+        sector_means = df.groupby("Secteur")[cols].mean()
+        cagr_data[f"{var_name}_CAGR"] = {}
+        for sector in sector_means.index:
+            sector_values = sector_means.loc[sector].values
+            if len(sector_values) == len(years) and not np.all(np.isnan(sector_values)):
+                start_val = sector_values[0]
+                end_val = sector_values[-1]
+                if pd.notna(start_val) and pd.notna(end_val):
+                    cagr = calculate_cagr(start_val, end_val, len(years)-1)
+                    cagr_data[f"{var_name}_CAGR"][sector] = cagr
+                else:
+                    cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+            else:
+                cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+    
+    return cagr_data
+cagr_data = precalculate_sector_cagrs(df)
 st.title("📊 Analyse Des Secteurs")
 available_years = sorted([
     int(re.search(r"\b(20\d{2})\b", col).group(1))
@@ -81,7 +130,6 @@ ca_column = f"Chiffre d'affaires {selected_year} (Dhs)"
 sector_sum = df.groupby("Secteur")[ca_column].sum().reset_index().fillna(0)
 sector_sum = sector_sum.sort_values(by=ca_column, ascending=False)
 sector_order = sector_sum["Secteur"].tolist()
-
 st.header(f"A. Overview Marché")
 sector_stats = df.groupby("Secteur").agg(
     ca_sum=(ca_column, "sum"),
@@ -143,7 +191,6 @@ fig_pie.update_layout(
 )
 fig_pie.update_traces(marker=dict(line=dict(color='white', width=2)))
 st.plotly_chart(fig_pie, use_container_width=True)
-
 def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix=None):
     ca_yearly = df_sector[ca_cols].sum().reset_index()
     ca_yearly.columns = ["Année", "CA"]
@@ -156,8 +203,9 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         st.info(f"Pas assez de données pour {sector_name}")
         return
     n_years = merged_df["Année"].iloc[-1] - merged_df["Année"].iloc[0]
-    cagr_ca = calculate_cagr(merged_df["CA"].iloc[0], merged_df["CA"].iloc[-1], n_years)
-    cagr_re = calculate_cagr(merged_df["RE"].iloc[0], merged_df["RE"].iloc[-1], n_years)
+    cagr_ca = cagr_data.get("Chiffre d'affaires_CAGR", {}).get(sector_name, np.nan)
+    cagr_re = cagr_data.get("Resultat d'exploitation_CAGR", {}).get(sector_name, np.nan)
+    
     merged_df["CA_Var"] = merged_df["CA"].pct_change()
     merged_df["RE_Var"] = merged_df["RE"].pct_change()
     fig = go.Figure()
@@ -209,7 +257,11 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         textfont=dict(size=16),
         marker=dict(size=10, line=dict(width=0))
     ))
-    merged_df["Marge_EBIT_CA"] = merged_df["RE"] / merged_df["CA"]
+    marge_cols = [f"Marge EBIT/CA {y}" for y in range(2020, 2024)]
+    marge_yearly = df_sector[marge_cols].mean().reset_index()
+    marge_yearly.columns = ["Année", "Marge_EBIT_CA"]
+    marge_yearly["Année"] = marge_yearly["Année"].str.extract(r'(\d{4})').astype(int)
+    merged_df = merged_df.merge(marge_yearly, on="Année", how="left")
     merged_df["Marge_EBIT_CA_Var"] = merged_df["Marge_EBIT_CA"].pct_change()
     fig.add_trace(go.Scatter(
         x=merged_df["Année"],
@@ -224,7 +276,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         marker=dict(size=10, line=dict(width=0))
     ))
     fig.add_annotation(
-        text=f"CAGR CA: {(cagr_ca*100):.2f}%",
+        text=f"CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else "CAGR CA: N/A",
         xref="paper", yref="paper", x=0.25, y=1.15,
         showarrow=False,
         font=dict(size=14, color="blue"),
@@ -232,13 +284,14 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         borderwidth=1, borderpad=4,
     )
     fig.add_annotation(
-        text=f"CAGR RE: {(cagr_re*100):.2f}%",
+        text=f"CAGR RE: {(cagr_re*100):.2f}%" if not pd.isna(cagr_re) else "CAGR RE: N/A",
         xref="paper", yref="paper", x=0.75, y=1.15,
         showarrow=False,
         font=dict(size=14, color="red"),
         bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
         borderwidth=1, borderpad=4,
     )    
+    
     max_ca = merged_df["CA"].max() if merged_df["CA"].max() > 0 else 1
     fig.update_layout(
         title=f"i. Évolution de CA, RE et Marge EBIT/CA pour {sector_name}" + (f" - {title_suffix}" if title_suffix else ""),
@@ -274,18 +327,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         tick0=2020,
         tickformat="d"
     )
-    # max_val = max(
-    #     merged_df["CA"].max(),
-    #     merged_df["RE"].max(),
-    #     merged_df["Marge_EBIT_CA"].max() * merged_df["CA"].max()
-    # )
-    # fig.update_layout(
-    #     yaxis=dict(range=[0, merged_df["CA"].max() * 1.3]),
-    #     yaxis2=dict(range=[0, merged_df["RE"].max() * 1.7]),
-    #     yaxis3=dict(range=[-0.05, 0.15])
-    # )
     st.plotly_chart(fig, use_container_width=True)
-
 st.markdown("---")
 st.header("B. Vue sectorielle individuelle")
 selected_sector = st.selectbox("Choisir un secteur à visualiser:", sorted(df['Secteur'].unique()))
@@ -303,10 +345,7 @@ charges_yearly = filtered_df[charges_cols].sum().reset_index()
 charges_yearly.columns = ["Année", "Charges"]
 charges_yearly["Année"] = charges_yearly["Année"].str.extract(r'(\d{4})').astype(int)
 if charges_yearly.shape[0] >= 2:
-    start_value = charges_yearly["Charges"].iloc[0]
-    end_value = charges_yearly["Charges"].iloc[-1]
-    n_years = charges_yearly["Année"].iloc[-1] - charges_yearly["Année"].iloc[0]
-    cagr_charges = calculate_cagr(start_value, end_value, n_years)
+    cagr_charges = cagr_data.get("Charges personnel_CAGR", {}).get(selected_sector, np.nan)
     charges_yearly["Variation"] = charges_yearly["Charges"].pct_change()
     fig2 = go.Figure()
     fig2.add_trace(go.Bar(
@@ -331,7 +370,7 @@ if charges_yearly.shape[0] >= 2:
         marker=dict(size=10, line=dict(width=0))
     ))
     fig2.add_annotation(
-        text=f"CAGR: {(cagr_charges*100):.2f}%",
+        text=f"CAGR: {(cagr_charges*100):.2f}%" if not pd.isna(cagr_charges) else "CAGR: N/A",
         xref="paper", yref="paper", x=0.5, y=1.15,
         showarrow=False,
         font=dict(size=16, color="black"),
@@ -356,7 +395,6 @@ if charges_yearly.shape[0] >= 2:
         tickformat="d"
     )
     st.plotly_chart(fig2, use_container_width=True)
-
 marge_variables = {
     "Marge EBIT/CA": [f"Marge EBIT/CA {y}" for y in range(2020, 2024)],
     "Marge CP/CA": [f"Marge CP/CA {y}" for y in range(2020, 2024)],
@@ -373,10 +411,7 @@ for var_name, cols in marge_variables.items():
     sector_yearly["Année"] = sector_yearly["Année"].str.extract(r'(\d{4})').astype(int)
     if sector_yearly.shape[0] < 2:
         continue
-    start_value = sector_yearly[var_name].iloc[0]
-    end_value = sector_yearly[var_name].iloc[-1]
-    n_years = sector_yearly["Année"].iloc[-1] - sector_yearly["Année"].iloc[0]
-    cagr = calculate_cagr(start_value, end_value, n_years)
+    cagr = cagr_data.get(f"{var_name}_CAGR", {}).get(selected_sector, np.nan)
     sector_yearly["Variation"] = sector_yearly[var_name].pct_change()
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -401,7 +436,7 @@ for var_name, cols in marge_variables.items():
         marker=dict(size=10, line=dict(width=0))
     ))
     fig.add_annotation(
-        text=f"CAGR: {(cagr*100):.2f}%",
+        text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
         xref="paper", yref="paper",
         x=0.5, y=1.15,
         showarrow=False,
@@ -460,7 +495,6 @@ fig_sector_pie.update_layout(
     margin=dict(l=0, r=0, t=40, b=0),
 )
 fig_sector_pie.update_traces(textfont=dict(size=13))
-
 st.plotly_chart(fig_sector_pie, use_container_width=True)
 
 def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, chart_title=None):
@@ -504,9 +538,10 @@ def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, cha
             marker=dict(size=10, line=dict(width=0)),
             textfont=dict(size=16),
         ))
-        cagr = calculate_cagr(vals[0], vals[-1], len(years)-1)
+        cagr_key = f"{var_name}_CAGR" if var_name in ["Chiffre d'affaires", "Resultat d'exploitation", "Charges personnel"] else f"{var_name}_CAGR"
+        cagr = cagr_data.get(cagr_key, {}).get(sector, np.nan)
         annotations.append(dict(
-            text=f"CAGR: {(cagr*100):.2f}%",
+            text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
             x=0.27 + i * (0.55 / max(1, bar_count)),
             y=1.12,
             xref="paper",
@@ -546,9 +581,7 @@ def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, cha
     if all_y:
         max_y = np.nanmax(all_y)
         fig.update_yaxes(range=[0, max_y * 1.2])
-
     st.plotly_chart(fig, use_container_width=True)
-
 st.markdown("---")
 st.header("C. Vue sectorielle comparative")
 multi_sectors = st.multiselect(
@@ -608,13 +641,12 @@ if multi_sectors:
             yaxis="y3",
             textfont=dict(size=16)
         ))
-        
-        n_years = len(years) - 1
-        cagr_ca = calculate_cagr(ca_vals[0], ca_vals[-1], n_years)
-        cagr_marge = calculate_cagr(marge_vals[0], marge_vals[-1], n_years)
+
+        cagr_ca = cagr_data.get("Chiffre d'affaires_CAGR", {}).get(sector, np.nan)
+        cagr_marge = cagr_data.get("Marge EBIT/CA_CAGR", {}).get(sector, np.nan)
         
         annotations.append(dict(
-            text=f"{sector}<br>CAGR CA: {cagr_ca*100:.2f}%",
+            text=f"{sector}<br>CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else f"{sector}<br>CAGR CA: N/A",
             xref="paper",
             yref="paper",
             x=ann_x + i * ann_step,
@@ -626,7 +658,6 @@ if multi_sectors:
             borderwidth=1,
             font=dict(size=11)
         ))
-
     max_ca = max([df[df['Secteur']==s][f"Chiffre d'affaires {y} (Dhs)"].sum() for s in multi_sectors for y in years if len(df[df['Secteur']==s]) > 0]) if multi_sectors else 1
     
     combined_fig.update_layout(
@@ -670,94 +701,80 @@ if multi_sectors:
         tickformat="d"
     )
     st.plotly_chart(combined_fig, use_container_width=True, key="combined_multi_evolution")
+    
     plot_multi_metric(multi_sectors, df, years, "Chiffre d'affaires", [f"Chiffre d'affaires {y} (Dhs)" for y in years], "CA (Dhs)", chart_title=f"ii. Comparaison CA et Variations pour {len(multi_sectors)} Secteurs")
     plot_multi_metric(multi_sectors, df, years, "Résultat d'exploitation", [f"Resultat d'exploitation {y} (Dhs)" for y in years], "RE (Dhs)", chart_title=f"iii. Comparaison RE et Variations pour {len(multi_sectors)} Secteurs")
     plot_multi_metric(multi_sectors, df, years, "Charges personnel", [f"Charges personnel {y}" for y in years], "Charges (Dhs)", chart_title=f"iv. Comparaison Charges et Variations pour {len(multi_sectors)} Secteurs")
     plot_multi_metric(multi_sectors, df, years, "Marge EBIT/CA", [f"Marge EBIT/CA {y}" for y in years], "Marge EBIT/CA (%)", chart_title=f"v. Comparaison Marge EBIT/CA pour {len(multi_sectors)} Secteurs")
     plot_multi_metric(multi_sectors, df, years, "Marge EBIT/CP", [f"Marge EBIT/CP {y}" for y in years], "Marge EBIT/CP (%)", chart_title=f"vi. Comparaison Marge EBIT/CP pour {len(multi_sectors)} Secteurs")
     plot_multi_metric(multi_sectors, df, years, "Marge CP/CA", [f"Marge CP/CA {y}" for y in years], "Marge CP/CA (%)", chart_title=f"vii. Comparaison Marge CP/CA pour {len(multi_sectors)} Secteurs")
-
 st.markdown("---")
 st.header("D. Classement CAGR")
 cagr_variables = {
     "Chiffre d'affaires": {
         "label": "CAGR CA",
-        "start_col": "Chiffre d'affaires 2020 (Dhs)",
-        "end_col": "Chiffre d'affaires 2023 (Dhs)"
+        "cagr_key": "Chiffre d'affaires_CAGR"
     },
     "Resultat d'exploitation": {
         "label": "CAGR RE",
-        "start_col": "Resultat d'exploitation 2020 (Dhs)",
-        "end_col": "Resultat d'exploitation 2023 (Dhs)"
+        "cagr_key": "Resultat d'exploitation_CAGR"
     },
     "Charges personnel": {
         "label": "CAGR CP",
-        "start_col": "Charges personnel 2020",
-        "end_col": "Charges personnel 2023"
+        "cagr_key": "Charges personnel_CAGR"
     },
     "Marge EBIT/CA": {
         "label": "CAGR EBIT/CA",
-        "start_col": "Marge EBIT/CA 2020",
-        "end_col": "Marge EBIT/CA 2023"
+        "cagr_key": "Marge EBIT/CA_CAGR"
     },
     "Marge EBIT/CP": {
         "label": "CAGR EBIT/CP",
-        "start_col": "Marge EBIT/CP 2020",
-        "end_col": "Marge EBIT/CP 2023"
+        "cagr_key": "Marge EBIT/CP_CAGR"
     },
     "Marge CP/CA": {
         "label": "CAGR CP/CA",
-        "start_col": "Marge CP/CA 2020",
-        "end_col": "Marge CP/CA 2023"
+        "cagr_key": "Marge CP/CA_CAGR"
     }
 }
 cagr_plot_idx = 0
 for var, config in cagr_variables.items():
     label = config["label"]
-    start_col = config["start_col"]
-    end_col = config["end_col"]
-    temp_data = df.copy()
+    cagr_key = config["cagr_key"]
     
-    if temp_data.empty:
+    if cagr_key not in cagr_data or not cagr_data[cagr_key]:
         st.info(f"Aucune donnée pour calculer {label}")
         continue
-
-    try:
-        temp_data = temp_data.dropna(subset=[start_col, end_col], how='any')
-        if temp_data.empty:
-            st.info(f"Aucune valeur CAGR calculable pour {label}")
-            continue
-        sector_sums = temp_data.groupby("Secteur")[[start_col, end_col]].sum().reset_index()
-        sector_sums[label] = sector_sums.apply(
-            lambda row: calculate_cagr(row[start_col], row[end_col], 3),
-            axis=1
-        )
-        sector_sums = sector_sums.set_index("Secteur").reindex(sector_order).reset_index().fillna(0.0)
-        sector_sums = sector_sums.sort_values(label, ascending=False)
-        fig = px.bar(sector_sums, x="Secteur", y=label,
-                     title=f"{label} des Secteurs (2020–2023)")
-        fig.update_traces(texttemplate='%{y:.2%}', textposition='auto', textfont=dict(size=20))
-        fig.update_layout(
-            height=550,
-            margin=dict(t=80, b=30, l=40, r=40),
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            xaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)', tickangle=45, zeroline=True),
-            yaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)', tickformat=".2%", visible=False, showticklabels=False),
-            font=dict(color='black')
-        )
-        fig.update_xaxes(
-            dtick=1,
-            tick0=2020,
-            tickformat="d"
-        )
-        fig.update_traces(marker=dict(line=dict(width=0)))
-        st.plotly_chart(fig, use_container_width=True, key=f"cagr_{cagr_plot_idx}")
-        cagr_plot_idx += 1
-
-    except Exception as e:
-        st.warning(f"Erreur lors du calcul du CAGR pour {var}: {e}")
-
+    
+    # Use pre-calculated CAGRs
+    sector_cagrs = pd.DataFrame.from_dict(cagr_data[cagr_key], orient='index', columns=[label]).reset_index()
+    sector_cagrs.columns = ["Secteur", label]
+    sector_cagrs = sector_cagrs.set_index("Secteur").reindex(sector_order).reset_index().fillna(np.nan)
+    sector_cagrs = sector_cagrs.sort_values(label, ascending=False).dropna(subset=[label])
+    
+    if sector_cagrs.empty:
+        st.info(f"Aucune valeur CAGR calculable pour {label}")
+        continue
+        
+    fig = px.bar(sector_cagrs, x="Secteur", y=label,
+                 title=f"{label} des Secteurs (2020–2023)")
+    fig.update_traces(texttemplate='%{y:.2%}', textposition='auto', textfont=dict(size=20))
+    fig.update_layout(
+        height=550,
+        margin=dict(t=80, b=30, l=40, r=40),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)', tickangle=45, zeroline=True),
+        yaxis=dict(showgrid=False, gridwidth=0, gridcolor='rgba(0,0,0,0)', tickformat=".2%", visible=False, showticklabels=False),
+        font=dict(color='black')
+    )
+    fig.update_xaxes(
+        dtick=1,
+        tick0=2020,
+        tickformat="d"
+    )
+    fig.update_traces(marker=dict(line=dict(width=0)))
+    st.plotly_chart(fig, use_container_width=True, key=f"cagr_{cagr_plot_idx}")
+    cagr_plot_idx += 1
 st.markdown("---")
 st.header("E. Détail par Secteur")
 selected_sector_detail = st.selectbox(
