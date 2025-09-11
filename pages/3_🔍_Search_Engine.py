@@ -4,7 +4,6 @@ import numpy as np
 import io
 import re
 from typing import List, Tuple, Dict, Any
-
 try:
     from rapidfuzz import fuzz
     def fuzzy_ratio(a: str, b: str) -> float:
@@ -23,13 +22,11 @@ except Exception:
         return difflib.SequenceMatcher(None, a, b).ratio()
 st.set_page_config(page_title="Search Engine", layout="wide")
 st.title("🔍 Search Engine")
-
 def get_col(df: pd.DataFrame, candidates: List[str]):
     for c in candidates:
         if c in df.columns:
             return c
     return None
-
 def split_tokens(text: str) -> List[str]:
     if pd.isna(text):
         return []
@@ -66,21 +63,23 @@ def split_tokens(text: str) -> List[str]:
             seen.add(v)
             out.append(v)
     return out
-
 def join_products_for_group(products_list: List[str], separator: str = " | ") -> str:
     if not products_list:
         return ""
-    all_products = []
+    all_tokens = []
+    # Loop through each company's products and split using the same logic as individual companies
     for products_str in products_list:
         if pd.isna(products_str) or not str(products_str).strip():
             continue
-        product_text = str(products_str).strip()
-        all_products.append(product_text)
-    if not all_products:
+        # Use the exact same split_tokens function that works for individual companies
+        company_tokens = split_tokens(str(products_str).strip())
+        all_tokens.extend(company_tokens)
+    # Create a set to remove duplicates across all companies, then convert back to list
+    unique_tokens = list(set(all_tokens))
+    if not unique_tokens:
         return ""
-    combined = separator.join(all_products)
-    return combined
-
+    # Join the unique tokens with the separator
+    return separator.join(unique_tokens)
 def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: float) -> Tuple[int, int]:
     if not seed_tokens:
         return 0, 0
@@ -91,13 +90,11 @@ def count_similar(seed_tokens: List[str], cand_tokens: List[str], threshold: flo
                 matched += 1
                 break
     return matched, len(seed_tokens)
-
 def frac_str(m: int, t: int) -> str:
     if t == 0:
         return "0/0 (N/A)"
     ratio = m / max(1, t)
     return f"{int(m)}/{int(t)} ({ratio:.2f})"
-
 def load_or_upload(filename: str, prompt_label: str):
     try:
         df = pd.read_excel(filename)
@@ -114,7 +111,6 @@ def load_or_upload(filename: str, prompt_label: str):
         except Exception as e:
             st.error(f"Erreur en lisant {filename}: {e}")
             return None
-
 def compact_num(n) -> str:
     if pd.isna(n):
         return "N/A"
@@ -124,9 +120,9 @@ def compact_num(n) -> str:
             n = 0
     except Exception:
         return str(n)
-    B = 1_000_000_0000
-    M = 1_000_0000
-    K = 1_0000
+    B = 1e9
+    M = 1e6
+    K = 1e3
     if abs(n) >= B:
         return f"{n / B:.2f}B"
     elif abs(n) >= M:
@@ -135,7 +131,6 @@ def compact_num(n) -> str:
         return f"{n / K:.1f}K"
     else:
         return f"{n:,.0f}"
-
 def format_range_compact(mi, ma) -> str:
     if pd.isna(mi) and pd.isna(ma):
         return "N/A"
@@ -146,7 +141,6 @@ def format_range_compact(mi, ma) -> str:
     if mi == ma:
         return compact_num(mi)
     return f"de {compact_num(mi)} à {compact_num(ma)}"
-
 def parse_revenue_text(s: str) -> Tuple[float, float]:
     if pd.isna(s):
         return np.nan, np.nan
@@ -155,15 +149,23 @@ def parse_revenue_text(s: str) -> Tuple[float, float]:
         return np.nan, np.nan
     low = np.nan
     high = np.nan
-    low_candidates = re.findall(r'[\d\.,]+', raw)
+    number_pattern = r'[\d]+(?:[.,]\d{3})*(?:[.,]\d+)?'
+    low_candidates = re.findall(number_pattern, raw)
     norm_nums = []
     for num in low_candidates:
-        digits = re.sub(r'[^\d]', '', num)
-        if digits != "":
-            try:
-                norm_nums.append(int(digits))
-            except:
-                pass
+        if ',' in num and '.' in num:
+            num = num.replace('.', '').replace(',', '.')
+        elif ',' in num:
+            if len(num.split(',')[1]) > 2:
+                num = num.replace(',', '.')
+            else:
+                num = num.replace(',', '')
+        elif '.' in num:
+            num = num
+        try:
+            norm_nums.append(float(num))
+        except:
+            pass
     raw_lower = raw.lower()
     if len(norm_nums) >= 2 and ("à" in raw_lower or "-" in raw_lower or "to" in raw_lower or "de" in raw_lower):
         low = float(norm_nums[0])
@@ -183,21 +185,18 @@ def parse_revenue_text(s: str) -> Tuple[float, float]:
         val = float(norm_nums[0])
         return val, val
     return np.nan, np.nan
-
 def find_numeric_columns(df: pd.DataFrame) -> List[str]:
     numeric_cols = []
     for col in df.columns:
         if df[col].dtype in ['int64', 'float64'] or (df[col].dtype == 'object' and pd.to_numeric(df[col], errors='coerce').notna().sum() > 0):
             numeric_cols.append(col)
     return numeric_cols
-
 def create_group_display_name(companies_list: List[str]) -> str:
     if not companies_list:
         return "Groupe Vide"
     if len(companies_list) == 1:
         return companies_list[0]
     return f"Groupe ({len(companies_list)} entreprises)"
-
 def create_group_from_selection(selected_companies: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not selected_companies:
         return {}
@@ -228,7 +227,6 @@ df_kerix = load_or_upload("kerix.xlsx", "kerix.xlsx")
 if df_companies is None and df_kerix is None:
     st.error("Au moins une des bases (companies.xlsx ou kerix.xlsx) doit être fournie.")
     st.stop()
-
 def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFrame, dict]:
     df = df.copy()
     info = {}
@@ -312,7 +310,6 @@ if 'groups' not in st.session_state:
     st.session_state.groups = {}
 if 'group_exclusions' not in st.session_state:
     st.session_state.group_exclusions = {'companies': set(), 'kerix': set()}
-
 def apply_group_exclusions(df, db_name):
     if not st.session_state.groups:
         return df
@@ -427,6 +424,7 @@ if search_mode == "Groupe d'entreprises" and not st.session_state.groups:
     st.warning("Créez d'abord un groupe dans la section Gestion des Groupes!")
     st.stop()
 seed_row = None
+seed_prods = None  # FIX: Initialize to None to avoid undefined errors if no seed selected
 seed_name_for_exclusion = None
 if search_mode == "Entreprise unique":
     if df_kerix_prepared is None:
@@ -437,6 +435,7 @@ if search_mode == "Entreprise unique":
                                         format_func=lambda i: options[i])
         seed_row = df_kerix_prepared.iloc[int(seed_choice_idx)]
         seed_name_for_exclusion = seed_row.get('_display_name', "")
+        seed_prods = extract_seed_tokens(seed_row)  # FIX: Compute here for Kerix single
     non_existant = st.checkbox("Entreprise non existante dans la base", False)
     if non_existant:
         with st.form("manual_seed_form_global"):
@@ -451,78 +450,91 @@ if search_mode == "Entreprise unique":
                 "Produits / Services": ms_products
             })
             seed_name_for_exclusion = ms_name
+            seed_prods = extract_seed_tokens(seed_row)  # FIX: Compute here for manual single
 elif search_mode == "Groupe d'entreprises":
     group_options = list(st.session_state.groups.keys())
     selected_group = st.selectbox("Choisir le groupe seed", group_options)
     if selected_group:
         group_data = st.session_state.groups[selected_group]
         if isinstance(group_data, dict):
+            # FIX: Don't set "Produits / Services" in seed_row (unnecessary for groups)
             seed_row = pd.Series({
                 "name": group_data.get('name', selected_group),
-                "Produits / Services": group_data.get('products', ''),
                 "_display_name": group_data.get('display_name', group_data.get('name', selected_group))
             })
             seed_name_for_exclusion = group_data.get('display_name', group_data.get('name', selected_group))
+            # FIX: Directly split the pre-joined products string (already tokenized/deduped in join_products_for_group)
+            # No need for split_tokens here—it can't handle " | ", but we know the format
+            joined_prods = group_data.get('products', '')
+            seed_prods = [t.strip().lower() for t in joined_prods.split(' | ') if t.strip()]
 st.subheader("Filtres")
-min_val = max(0.0, global_min)
-max_val = max(min_val + 1.0, global_max)
-st.markdown(f"##### Filtre CA (Chiffre d'affaires) - Min: {compact_num(global_min)} | Max: {compact_num(global_max)}")
-range_span = max_val - min_val
-approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
-approx_step = max(1.0, approx_step)
-col1, col2 = st.columns(2)
-with col1:
-    ca_min_input = st.number_input(
-        "Min (Dhs)",
-        min_value=float(min_val),
-        max_value=float(max_val),
-        # value=min_val,
-        step=float(approx_step)
-    )
-with col2:
-    ca_max_input = st.number_input(
-        "Max (Dhs)",
-        min_value=float(ca_min_input),
-        max_value=float(max_val),
-        # value=max_val,
-        step=float(approx_step)
-    )
-ca_min_sel, ca_max_sel = ca_min_input, ca_max_input
-st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
-all_operating = []
-if df_companies_prepared is not None:
-    all_operating.append(df_companies_prepared['_operating_income'])
-if df_kerix_prepared is not None:
-    all_operating.append(df_kerix_prepared['_operating_income'])
-if all_operating:
-    all_operating = pd.concat(all_operating)
-    re_min_val = float(all_operating.min())
-    re_max_val = float(all_operating.max())
+use_ca_filter = st.checkbox("Activer filtre CA (Chiffre d'affaires)", value=False)
+if use_ca_filter:
+    st.markdown(f"##### Filtre CA - Min: {compact_num(global_min)} | Max: {compact_num(global_max)}")
+    min_val = max(0.0, global_min)
+    max_val = max(min_val + 1.0, global_max)
+    range_span = max_val - min_val
+    approx_step = 10 ** (int(np.floor(np.log10(max(1.0, range_span)))) - 1)
+    approx_step = max(1.0, approx_step)
+    col1, col2 = st.columns(2)
+    with col1:
+        ca_min_input = st.number_input(
+            "Min (Dhs)",
+            min_value=float(min_val),
+            max_value=float(max_val),
+            value=float(min_val),
+            step=float(approx_step)
+        )
+    with col2:
+        ca_max_input = st.number_input(
+            "Max (Dhs)",
+            min_value=float(ca_min_input),
+            max_value=float(max_val),
+            value=float(max_val),
+            step=float(approx_step)
+        )
+    ca_min_sel, ca_max_sel = ca_min_input, ca_max_input
+    st.markdown(f"Min - Max sélectionné : **{compact_num(ca_min_sel)}** - **{compact_num(ca_max_sel)}**")
 else:
-    re_min_val, re_max_val = 0.0, 1_000_000.0
-st.markdown(f"##### Filtre Résultat d'exploitation - Min: {compact_num(re_min_val)} | Max: {compact_num(re_max_val)}")
-re_range = re_max_val - re_min_val
-re_step = 10 ** (int(np.floor(np.log10(max(1.0, abs(re_range)))) - 1))
-re_step = max(1.0, re_step)
-col1, col2 = st.columns(2)
-with col1:
-    re_min_input = st.number_input(
-        "Min (Dhs)",
-        min_value=float(re_min_val),
-        max_value=float(re_max_val),
-        value=0.0,
-        step=float(re_step)
-    )
-with col2:
-    re_max_input = st.number_input(
-        "Max (Dhs)",
-        min_value=float(re_min_input),
-        max_value=float(re_max_val),
-        value=0.0,
-        step=float(re_step)
-    )
-re_min_sel, re_max_sel = re_min_input, re_max_input
-st.markdown(f"Min - Max sélectionné : **{compact_num(re_min_sel)}** - **{compact_num(re_max_sel)}**")
+    ca_min_sel, ca_max_sel = None, None
+use_re_filter = st.checkbox("Activer filtre Résultat d'exploitation", value=False)
+if use_re_filter:
+    all_operating = []
+    if df_companies_prepared is not None:
+        all_operating.append(df_companies_prepared['_operating_income'])
+    if df_kerix_prepared is not None:
+        all_operating.append(df_kerix_prepared['_operating_income'])
+    if all_operating:
+        all_operating = pd.concat(all_operating)
+        re_min_val = float(all_operating.min())
+        re_max_val = float(all_operating.max())
+    else:
+        re_min_val, re_max_val = 0.0, 1_000_000.0
+    st.markdown(f"##### Filtre Résultat d'exploitation - Min: {compact_num(re_min_val)} | Max: {compact_num(re_max_val)}")
+    re_range = re_max_val - re_min_val
+    re_step = 10 ** (int(np.floor(np.log10(max(1.0, abs(re_range)))) - 1))
+    re_step = max(1.0, re_step)
+    col1, col2 = st.columns(2)
+    with col1:
+        re_min_input = st.number_input(
+            "Min (Dhs)",
+            min_value=float(re_min_val),
+            max_value=float(re_max_val),
+            value=float(re_min_val),
+            step=float(re_step)
+        )
+    with col2:
+        re_max_input = st.number_input(
+            "Max (Dhs)",
+            min_value=float(re_min_input),
+            max_value=float(re_max_val),
+            value=float(re_max_val),
+            step=float(re_step)
+        )
+    re_min_sel, re_max_sel = re_min_input, re_max_input
+    st.markdown(f"Min - Max sélectionné : **{compact_num(re_min_sel)}** - **{compact_num(re_max_sel)}**")
+else:
+    re_min_sel, re_max_sel = None, None
 st.markdown("##### Filtre Ville")
 all_cities = set()
 if df_companies_prepared is not None:
@@ -542,6 +554,8 @@ selected_sectors = st.multiselect("Secteurs", options=sector_options, default=[]
 if seed_row is None:
     st.warning("Sélectionnez ou créez une société seed pour lancer les recherches.")
     st.stop()
+# FIX: Remove this line (replaced by branch-specific computation above)
+# def extract_seed_tokens(seed_series):  # Keep the function definition for singles/manual
 def extract_seed_tokens(seed_series):
     prods = ""
     for k in ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"]:
@@ -551,7 +565,8 @@ def extract_seed_tokens(seed_series):
     if prods == "":
         prods = seed_series.get("Produits / Services", "") or seed_series.get("products", "") or ""
     return split_tokens(prods)
-seed_prods = extract_seed_tokens(seed_row)
+# FIX: Remove this line (seed_prods is now set in branches)
+# seed_prods = extract_seed_tokens(seed_row)
 st.subheader("B. Algorithme Concurrentiel")
 tabs = st.tabs(["Base totale", "Kerix", "Paramètres"])
 with tabs[2]:
@@ -563,14 +578,19 @@ def compute_matches_for_df(df, label):
     if df is None:
         return None, None
     candidates = df.copy().reset_index(drop=True)
-    sel_min = float(ca_min_sel)
-    sel_max = float(ca_max_sel)
-    mask_revenue = (~candidates['_revenue_min'].isna()) & (~candidates['_revenue_max'].isna())
-    mask_revenue_overlap = mask_revenue & (candidates['_revenue_max'] >= sel_min) & (candidates['_revenue_min'] <= sel_max)
-    mask_operating = (candidates['_operating_income'] >= re_min_sel) & (candidates['_operating_income'] <= re_max_sel)
     mask_city = candidates['_city'].isin(selected_cities) if selected_cities else pd.Series([True] * len(candidates))
     mask_sector = candidates['_sector'].isin(selected_sectors) if selected_sectors else pd.Series([True] * len(candidates))
-    candidates = candidates[mask_revenue_overlap & mask_operating & mask_city & mask_sector].reset_index(drop=True)
+    if use_ca_filter:
+        sel_min = float(ca_min_sel)
+        sel_max = float(ca_max_sel)
+        mask_revenue = (~candidates['_revenue_min'].isna()) & (~candidates['_revenue_max'].isna())
+        mask_revenue_overlap = mask_revenue & (candidates['_revenue_max'] >= sel_min) & (candidates['_revenue_min'] <= sel_max)
+        candidates = candidates[mask_revenue_overlap & mask_city & mask_sector].reset_index(drop=True)
+    else:
+        candidates = candidates[mask_city & mask_sector].reset_index(drop=True)
+    if use_re_filter:
+        mask_operating = (candidates['_operating_income'] >= re_min_sel) & (candidates['_operating_income'] <= re_max_sel)
+        candidates = candidates[mask_operating].reset_index(drop=True)
     try:
         if seed_name_for_exclusion and '_display_name' in candidates.columns:
             candidates = candidates[candidates['_display_name'].astype(str) != str(seed_name_for_exclusion)]
@@ -609,7 +629,7 @@ with tabs[0]:
         st.warning("Fichier companies.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({"seed_name": seed_name_for_exclusion})
+        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})  # FIX: Optional debug output to verify tokens (remove if not needed)
         candidates, display_cols = compute_matches_for_df(df_companies_prepared, "Base totale")
         if candidates is None or candidates.shape[0] == 0:
             st.info("Aucun candidat trouvé dans la Base totale pour les filtres sélectionnés.")
@@ -635,7 +655,7 @@ with tabs[1]:
         st.warning("Fichier kerix.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({"seed_name": seed_name_for_exclusion})
+        st.write({"seed_name": seed_name_for_exclusion, "seed_products_tokens": seed_prods})  # FIX: Optional debug output to verify tokens (remove if not needed)
         candidates_k, display_cols_k = compute_matches_for_df(df_kerix_prepared, "Kerix")
         if candidates_k is None or candidates_k.shape[0] == 0:
             st.info("Aucun candidat trouvé dans Kerix pour les filtres sélectionnés.")
