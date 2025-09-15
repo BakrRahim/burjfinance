@@ -1295,13 +1295,13 @@ if primary_entity_name and products_col:
         if not primary_is_group:
             suggested_companies = find_closest_companies(
                 df, primary_entity_name, COMPANY_COL, products_col,
-                threshold=suggestion_threshold, top_n=2
+                threshold=suggestion_threshold, top_n=5
             )
         else:
             group_companies = group_manager.groups[primary_entity_name].get('companies', [])
             suggested_companies = find_closest_companies_to_group(
                 df, group_companies, COMPANY_COL, products_col,
-                threshold=suggestion_threshold, top_n=2
+                threshold=suggestion_threshold, top_n=5
             )
         
         if ca_filter_enabled and suggested_companies:
