@@ -1232,31 +1232,24 @@ elif display_mode == "Groupe d'entreprises":
 st.markdown("---")
 st.subheader("B. Vue entreprise comparative")
 brand_colors = ["#052449", "#0064EF", "#428DF2", "#375F92", "#003967", "#FF6B6B", "#4ECDC4", "#45B7D1"]
-
 products_col = extract_products_column(df)
 if not products_col:
     st.warning("⚠️ Colonne produits/services non trouvée. Les suggestions automatiques ne seront pas disponibles.")
-
 available_individual_companies = [
     c.strip() for c in sorted(df[COMPANY_COL].dropna().astype(str).str.strip().unique())
     if c.strip() not in grouped_companies
 ]
-
 st.markdown("##### 🔄 Sélection intelligente pour comparaison")
-
 col1, col2 = st.columns([2, 1])
-
 with col1:
     primary_selection_type = st.radio(
         "Choisir une entreprise principale pour suggestions automatiques:",
         ["Entreprise individuelle", "Groupe existant"],
         key="primary_selection_type"
     )
-
 primary_entity = None
 primary_entity_name = None
 primary_is_group = False
-
 if primary_selection_type == "Entreprise individuelle":
     if available_individual_companies:
         primary_entity = st.selectbox(
@@ -1282,17 +1275,26 @@ else:
     else:
         st.info("Aucun groupe disponible.")
 
+# CA 2023 Filter for Suggestions
+st.markdown("##### 🔍 Filtre CA 2023")
+ca_filter_enabled = st.checkbox("Activer le filtre CA 2023", key="ca_filter_enabled")
+ca_min = ca_max = None
+if ca_filter_enabled:
+    col_min, col_max = st.columns(2)
+    with col_min:
+        ca_min = st.number_input("CA minimum (MAD)", value=0, step=1000000, key="ca_min")
+    with col_max:
+        ca_max = st.number_input("CA maximum (MAD)", value=1000000000, step=1000000, key="ca_max")
+
 suggested_companies = []
 suggestion_threshold = 0.75
-
 if primary_entity_name and products_col:
     with st.container():
-        st.markdown("### 🎯 Suggestions automatiques")
+        st.markdown("#### 🎯 Comparaison Intelligente / Suggestions automatiques")
         st.markdown("**Entreprises les plus similaires basées sur les produits/services:**")
-        
         if not primary_is_group:
             suggested_companies = find_closest_companies(
-                df, primary_entity_name, COMPANY_COL, products_col, 
+                df, primary_entity_name, COMPANY_COL, products_col,
                 threshold=suggestion_threshold, top_n=2
             )
         else:
@@ -1301,6 +1303,19 @@ if primary_entity_name and products_col:
                 df, group_companies, COMPANY_COL, products_col,
                 threshold=suggestion_threshold, top_n=2
             )
+        
+        if ca_filter_enabled and suggested_companies:
+            ca_2023_col = get_column_for("CA", 2023)
+            if ca_2023_col and ca_2023_col in df.columns:
+                filtered_suggestions = []
+                for suggestion in suggested_companies:
+                    comp_df = safe_find_company(df, suggestion['company'], COMPANY_COL)
+                    if not comp_df.empty:
+                        ca_value_raw = comp_df.iloc[0][ca_2023_col]
+                        ca_value = int(safe_to_numeric(ca_value_raw)) if pd.notna(safe_to_numeric(ca_value_raw)) else np.nan
+                        if pd.notna(ca_value) and ca_min <= ca_value <= ca_max:
+                            filtered_suggestions.append(suggestion)
+                suggested_companies = filtered_suggestions
         
         if suggested_companies:
             for i, suggestion in enumerate(suggested_companies, 1):
@@ -1312,7 +1327,7 @@ if primary_entity_name and products_col:
                         score_class = "similarity-score"
                         st.markdown(f"""
                         <div class="{score_class}">
-                            {suggestion['similarity_score']:.1%} 
+                            {suggestion['similarity_score']:.1%}
                             ({suggestion['matched_count']}/{suggestion['total_count']})
                         </div>
                         """, unsafe_allow_html=True)
@@ -1321,31 +1336,32 @@ if primary_entity_name and products_col:
                             st.session_state.comparison_suggestions = st.session_state.get('comparison_suggestions', []) + [suggestion['company']]
                             st.success(f"{suggestion['company']} ajouté à la comparaison!")
                             st.rerun()
-            
-            with st.expander("🔍 Détails des suggestions (produits correspondants)"):
-                for suggestion in suggested_companies:
-                    col_d1, col_d2 = st.columns(2)
-                    with col_d1:
-                        st.write(f"**Entreprise principale:** {primary_entity_name}")
-                        st.write(f"Produits: {', '.join(suggestion['seed_products'][:5])}...")
-                    with col_d2:
-                        st.write(f"**Entreprise suggérée:** {suggestion['company']}")
-                        st.write(f"Produits: {', '.join(suggestion['candidate_products'][:5])}...")
-                    st.write(f"**Produits en commun détectés:** {suggestion['matched_count']}/{suggestion['total_count']}")
-                    st.divider()
         else:
             st.info("❌ Aucune entreprise similaire trouvée avec le seuil actuel.")
             if st.button("🔧 Baisser le seuil de similarité (0.3)"):
                 suggested_companies = find_closest_companies(
-                    df, primary_entity_name, COMPANY_COL, products_col, 
-                    threshold=0.3, top_n=2
+                    df, primary_entity_name, COMPANY_COL, products_col,
+                    threshold=0.3, top_n=5
                 ) if not primary_is_group else find_closest_companies_to_group(
-                    df, group_manager.groups[primary_entity_name]['companies'], 
-                    COMPANY_COL, products_col, threshold=0.3, top_n=2
+                    df, group_manager.groups[primary_entity_name]['companies'],
+                    COMPANY_COL, products_col, threshold=0.3, top_n=5
                 )
+                
+                if ca_filter_enabled and suggested_companies:
+                    ca_2023_col = get_column_for("CA", 2023)
+                    if ca_2023_col and ca_2023_col in df.columns:
+                        filtered_suggestions = []
+                        for suggestion in suggested_companies:
+                            comp_df = safe_find_company(df, suggestion['company'], COMPANY_COL)
+                            if not comp_df.empty:
+                                ca_value_raw = comp_df.iloc[0][ca_2023_col]
+                                ca_value = int(safe_to_numeric(ca_value_raw)) if pd.notna(safe_to_numeric(ca_value_raw)) else np.nan
+                                if pd.notna(ca_value) and ca_min <= ca_value <= ca_max:
+                                    filtered_suggestions.append(suggestion)
+                        suggested_companies = filtered_suggestions
+                
                 if suggested_companies:
                     st.rerun()
-
 with col2:
     st.markdown("### 📋 Suggestions ajoutées")
     if 'comparison_suggestions' in st.session_state:
@@ -1360,40 +1376,63 @@ with col2:
                     st.rerun()
     else:
         st.info("Aucune suggestion ajoutée")
-
-st.markdown("---")
-manual_selection = st.checkbox("🔧 Ou sélectionner manuellement d'autres entreprises/groupes", value=False)
-
 comparison_entities = []
-if manual_selection:
-    all_comparison_options = available_individual_companies + [f"👥 {g}" for g in sorted(group_manager.get_all_groups())]
-    manual_selections = st.multiselect(
-        "Entreprises ET groupes à comparer (manuel):",
-        all_comparison_options,
-        placeholder="Choisissez manuellement...",
-        key="manual_comparison"
-    )
-    for entity in manual_selections:
-        if entity.startswith("👥 "):
-            group_name = entity[2:].strip()
-            if group_name:
-                comparison_entities.append(group_name)
-        else:
-            entity_clean = entity.strip()
-            if entity_clean:
-                comparison_entities.append(entity_clean)
-else:
-    if 'comparison_suggestions' in st.session_state:
-        comparison_entities = st.session_state.comparison_suggestions.copy()
-    if primary_entity_name and primary_entity_name not in comparison_entities:
-        comparison_entities.append(primary_entity_name)
+all_comparison_options = available_individual_companies + [f"👥 {g}" for g in sorted(group_manager.get_all_groups())]
+manual_selections = st.multiselect(
+    "Entreprises ET groupes à comparer (manuel):",
+    all_comparison_options,
+    placeholder="Choisissez manuellement...",
+    key="manual_comparison"
+)
 
-if not comparison_entities and not manual_selection:
-    st.info("👆 Sélectionnez une entreprise principale pour obtenir des suggestions automatiques, ou activez la sélection manuelle.")
+for entity in manual_selections:
+    if entity.startswith("👥 "):
+        group_name = entity[2:].strip()
+        if group_name:
+            comparison_entities.append(group_name)
+    else:
+        entity_clean = entity.strip()
+        if entity_clean:
+            comparison_entities.append(entity_clean)
+if 'comparison_suggestions' in st.session_state:
+    comparison_entities = st.session_state.comparison_suggestions.copy()
+if primary_entity_name and primary_entity_name not in comparison_entities:
+    comparison_entities.append(primary_entity_name)
+
+# Apply CA 2023 filter to manual selections and final comparison if enabled
+ca_2023_col = get_column_for("CA", 2023)
+if ca_filter_enabled and ca_2023_col and ca_2023_col in df.columns:
+    filtered_entities = []
+    for entity in comparison_entities:
+        is_group = entity in group_manager.groups
+        if is_group:
+            # For groups, check if any company in the group meets the CA criteria
+            companies_in_group = group_manager.groups[entity].get("companies", [])
+            group_meets_criteria = False
+            for comp in companies_in_group:
+                comp_df = safe_find_company(df, comp, COMPANY_COL)
+                if not comp_df.empty:
+                    ca_value_raw = comp_df.iloc[0][ca_2023_col]
+                    ca_value = int(safe_to_numeric(ca_value_raw)) if pd.notna(safe_to_numeric(ca_value_raw)) else np.nan
+                    if pd.notna(ca_value) and ca_min <= ca_value <= ca_max:
+                        group_meets_criteria = True
+                        break
+            if group_meets_criteria:
+                filtered_entities.append(entity)
+        else:
+            # For individual companies
+            comp_df = safe_find_company(df, entity, COMPANY_COL)
+            if not comp_df.empty:
+                ca_value_raw = comp_df.iloc[0][ca_2023_col]
+                ca_value = int(safe_to_numeric(ca_value_raw)) if pd.notna(safe_to_numeric(ca_value_raw)) else np.nan
+                if pd.notna(ca_value) and ca_min <= ca_value <= ca_max:
+                    filtered_entities.append(entity)
+    comparison_entities = filtered_entities
+    if not comparison_entities:
+        st.warning("⚠️ Aucun résultat ne correspond aux critères de filtre CA 2023.")
 
 selected_companies = [e for e in comparison_entities if e not in group_manager.groups]
 selected_groups = [e for e in comparison_entities if e in group_manager.groups]
-
 def plot_multi_companies(
     df,
     years,
@@ -1421,8 +1460,8 @@ def plot_multi_companies(
         comp_df = df[df[COMPANY_COL].str.lower().str.strip() == company.lower().strip()]
         if comp_df.empty:
             continue
-        vals = [float(comp_df.get(col, pd.Series(dtype=float)).mean(skipna=True)) for col in cols]
-        vals = np.array(vals, dtype=float)
+        vals = [int(safe_to_numeric(comp_df.get(col, pd.Series(dtype=float)).mean(skipna=True))) for col in cols]
+        vals = np.array(vals, dtype=int)
         texts = [format_number(v, percent=("marge" in var_name.lower())) for v in vals]
         x_offset = np.array(years) + (i - n_companies / 2 + 0.5) * bar_width
         fig.add_trace(go.Bar(
@@ -1463,7 +1502,6 @@ def plot_multi_companies(
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
-
 def adjust_color_brightness(hex_color, factor=1.2):
     try:
         hex_color = str(hex_color).lstrip("#")
@@ -1474,7 +1512,6 @@ def adjust_color_brightness(hex_color, factor=1.2):
         return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
     except:
         return hex_color
-
 def plot_enhanced_comparison(df, years, entities, color_map=None):
     if not entities or df is None or df.empty:
         st.warning("No valid entities or data available for comparison")
@@ -1500,8 +1537,10 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                     if not comp_df.empty:
                         ca_col = get_column_for("CA", y)
                         re_col = get_column_for("RE", y)
-                        ca_val += safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col and ca_col in comp_df.columns else 0
-                        re_val += safe_to_numeric(comp_df.iloc[0][re_col]) if re_col and re_col in comp_df.columns else 0
+                        ca_val_raw = comp_df.iloc[0][ca_col] if ca_col and ca_col in comp_df.columns else 0
+                        re_val_raw = comp_df.iloc[0][re_col] if re_col and re_col in comp_df.columns else 0
+                        ca_val += int(safe_to_numeric(ca_val_raw)) if ca_val_raw else 0
+                        re_val += int(safe_to_numeric(re_val_raw)) if re_val_raw else 0
                 if ca_val == 0:
                     ca_val = np.nan
                 if re_val == 0:
@@ -1511,8 +1550,10 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                 if not comp_df.empty:
                     ca_col = get_column_for("CA", y)
                     re_col = get_column_for("RE", y)
-                    ca_val = safe_to_numeric(comp_df.iloc[0][ca_col]) if ca_col else np.nan
-                    re_val = safe_to_numeric(comp_df.iloc[0][re_col]) if re_col else np.nan
+                    ca_val_raw = comp_df.iloc[0][ca_col] if ca_col else np.nan
+                    re_val_raw = comp_df.iloc[0][re_col] if re_col else np.nan
+                    ca_val = int(safe_to_numeric(ca_val_raw)) if pd.notna(safe_to_numeric(ca_val_raw)) else np.nan
+                    re_val = int(safe_to_numeric(re_val_raw)) if pd.notna(safe_to_numeric(re_val_raw)) else np.nan
                 else:
                     ca_val = re_val = np.nan
             ca_vals.append(ca_val)
@@ -1568,7 +1609,6 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
-
 def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None):
     if not entities or df is None or df.empty:
         return
@@ -1582,6 +1622,8 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
     if metric_key not in METRIC_TOKENS:
         st.warning(f"Invalid metric_key '{metric_key}'. Available: {list(METRIC_TOKENS.keys())}")
         return
+    annotations = []
+    n_years = len(YEARS) - 1
     for i, entity in enumerate(entities):
         if not isinstance(entity, str) or not entity.strip():
             continue
@@ -1645,6 +1687,18 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                         textposition="top center",
                         textfont=dict(size=16),
                     ))
+            cagr_val = calculate_cagr(values[0], values[-1], n_years)
+            annotations.append(dict(
+                text=f"{display_name}<br>CAGR: {cagr_val*100:.2f}%",
+                xref="paper", yref="paper",
+                x=0.05 + i * (1/(n_entities+1)), y=1.12,
+                showarrow=False,
+                align="left",
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor=color_map[entity],
+                borderwidth=1,
+                font=dict(size=12, color=color_map[entity])
+            ))
     metric_display_name = {
         "CA": "Chiffre d'affaires",
         "RE": "Résultat d'exploitation",
@@ -1665,16 +1719,16 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
         barmode="group",
         bargap=0.15,
         bargroupgap=0.05,
-        height=500,
+        height=550,
         xaxis=dict(tickmode="array", tickvals=years, title="Année", showgrid=False),
         yaxis=dict(title=yaxis_title, tickformat=tickformat, showgrid=False, visible=False, showticklabels=False),
         legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
         hovermode="x unified",
+        annotations=annotations,
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
-
 if comparison_entities:
     st.markdown(f"### 📈 Comparaison intelligente ({len(comparison_entities)} entités)")
     col1, col2, col3 = st.columns([1, 8, 1])
@@ -1688,15 +1742,13 @@ if comparison_entities:
             else:
                 entity_info.append(f"🏢 {entity}")
         st.info(" | ".join(entity_info))
-    
     if 'comparison_suggestions' in st.session_state and primary_entity_name:
-        st.markdown("**🔍 Scores de similarité des suggestions:**")
         suggestion_scores = []
         products_col = extract_products_column(df)
         if products_col and primary_entity_name:
             if not primary_is_group:
                 all_similarities = find_closest_companies(
-                    df, primary_entity_name, COMPANY_COL, products_col, 
+                    df, primary_entity_name, COMPANY_COL, products_col,
                     threshold=0.1, top_n=10
                 )
             else:
@@ -1706,6 +1758,20 @@ if comparison_entities:
                     threshold=0.1, top_n=10
                 )
             
+            # Apply CA filter to similarity scores if enabled
+            if ca_filter_enabled and all_similarities:
+                ca_2023_col = get_column_for("CA", 2023)
+                if ca_2023_col and ca_2023_col in df.columns:
+                    filtered_similarities = []
+                    for sim in all_similarities:
+                        comp_df = safe_find_company(df, sim['company'], COMPANY_COL)
+                        if not comp_df.empty:
+                            ca_value_raw = comp_df.iloc[0][ca_2023_col]
+                            ca_value = int(safe_to_numeric(ca_value_raw)) if pd.notna(safe_to_numeric(ca_value_raw)) else np.nan
+                            if pd.notna(ca_value) and ca_min <= ca_value <= ca_max:
+                                filtered_similarities.append(sim)
+                    all_similarities = filtered_similarities
+            
             for sim in all_similarities:
                 if sim['company'] in comparison_entities:
                     suggestion_scores.append({
@@ -1714,16 +1780,13 @@ if comparison_entities:
                         'matched': sim['matched_count'],
                         'total': sim['total_count']
                     })
-            
             if suggestion_scores:
                 scores_df = pd.DataFrame(suggestion_scores)
                 scores_df['Score'] = scores_df['score'].apply(lambda x: f"{x:.1%}")
                 scores_df['Match'] = scores_df.apply(lambda row: f"{row['matched']}/{row['total']}", axis=1)
                 st.dataframe(scores_df[['company', 'Score', 'Match']].rename(columns={'company': 'Entreprise'}), use_container_width=True)
-    
     if df is not None and not df.empty and comparison_entities:
         plot_enhanced_comparison(df, YEARS, comparison_entities)
-    
     if len(comparison_entities) <= 6:
         metrics_to_plot = ["CA", "RE", "CP", "EBIT_CA", "EBIT_CP", "CP_CA"]
         color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(comparison_entities)}
@@ -1735,7 +1798,6 @@ if comparison_entities:
                 metric_key=metric_key,
                 color_map=color_map
             )
-        
         st.markdown("### 📋 Récapitulatif comparatif")
         summary_data = []
         for entity in comparison_entities:
@@ -1744,12 +1806,15 @@ if comparison_entities:
                    "Type": "Groupe" if is_group else "Entreprise"}
             for y in YEARS:
                 if is_group:
-                    ca = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CA", y)
-                    re = aggregate_group_data(group_manager.groups[entity]['companies'], df, "RE", y)
-                    cp = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CP", y)
-                    ebit_ca = (re / ca * 100) if ca != 0 else np.nan
-                    ebit_cp = (re / cp * 100) if cp != 0 else np.nan
-                    cp_ca = (cp / ca * 100) if ca != 0 else np.nan
+                    ca_raw = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CA", y)
+                    re_raw = aggregate_group_data(group_manager.groups[entity]['companies'], df, "RE", y)
+                    cp_raw = aggregate_group_data(group_manager.groups[entity]['companies'], df, "CP", y)
+                    ca = int(safe_to_numeric(ca_raw)) if pd.notna(safe_to_numeric(ca_raw)) else np.nan
+                    re = int(safe_to_numeric(re_raw)) if pd.notna(safe_to_numeric(re_raw)) else np.nan
+                    cp = int(safe_to_numeric(cp_raw)) if pd.notna(safe_to_numeric(cp_raw)) else np.nan
+                    ebit_ca = (re / ca * 100) if ca != 0 and pd.notna(ca) and pd.notna(re) else np.nan
+                    ebit_cp = (re / cp * 100) if cp != 0 and pd.notna(cp) and pd.notna(re) else np.nan
+                    cp_ca = (cp / ca * 100) if ca != 0 and pd.notna(ca) and pd.notna(cp) else np.nan
                     values = {"CA": ca, "RE": re, "CP": cp,
                               "EBIT_CA": ebit_ca, "EBIT_CP": ebit_cp, "CP_CA": cp_ca}
                 else:
@@ -1760,10 +1825,11 @@ if comparison_entities:
                         values = {}
                         for metric in ["CA", "RE", "CP"]:
                             col = get_column_for(metric, y)
-                            values[metric] = safe_to_numeric(comp_df.iloc[0][col]) if col and col in comp_df.columns else np.nan
-                        values["EBIT_CA"] = (values["RE"] / values["CA"] * 100) if values["CA"] else np.nan
-                        values["EBIT_CP"] = (values["RE"] / values["CP"] * 100) if values["CP"] else np.nan
-                        values["CP_CA"] = (values["CP"] / values["CA"] * 100) if values["CA"] else np.nan
+                            raw_value = comp_df.iloc[0][col] if col and col in comp_df.columns else np.nan
+                            values[metric] = int(safe_to_numeric(raw_value)) if pd.notna(safe_to_numeric(raw_value)) else np.nan
+                        values["EBIT_CA"] = (values["RE"] / values["CA"] * 100) if values["CA"] and pd.notna(values["CA"]) and pd.notna(values["RE"]) else np.nan
+                        values["EBIT_CP"] = (values["RE"] / values["CP"] * 100) if values["CP"] and pd.notna(values["CP"]) and pd.notna(values["RE"]) else np.nan
+                        values["CP_CA"] = (values["CP"] / values["CA"] * 100) if values["CA"] and pd.notna(values["CA"]) and pd.notna(values["CP"]) else np.nan
                     else:
                         values = {metric: np.nan for metric in ["CA","RE","CP","EBIT_CA","EBIT_CP","CP_CA"]}
                 for metric in ["CA","RE","CP","EBIT_CA","EBIT_CP","CP_CA"]:
@@ -1775,10 +1841,8 @@ if comparison_entities:
             summary_data.append(row)
         summary_df = pd.DataFrame(summary_data)
         st.dataframe(summary_df, use_container_width=True)
-        
-        if st.button("📥 Exporter comparaison (avec scores de similarité)"):
+        if st.button("📥 Exporter comparaison"):
             export_data = summary_df.copy()
-            
             if 'comparison_suggestions' in st.session_state and primary_entity_name and suggestion_scores:
                 similarity_map = {s['company']: s['score'] for s in suggestion_scores}
                 export_data['Score de similarité'] = export_data['Entité'].apply(
@@ -1786,15 +1850,12 @@ if comparison_entities:
                 )
             if primary_entity_name:
                 export_data['Entité de référence'] = primary_entity_name
-                
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine="openpyxl") as writer:
                 export_data.to_excel(writer, sheet_name="Comparaison", index=False)
-
                 if suggestion_scores:
                     sim_df = pd.DataFrame(suggestion_scores)
                     sim_df.to_excel(writer, sheet_name="Scores_Similarite", index=False)
-
                     if products_col:
                         products_data = []
                         for entity in comparison_entities:
@@ -1806,11 +1867,9 @@ if comparison_entities:
                                         'Entreprise': entity,
                                         'Produits/Services': products_text[:500] + "..." if len(products_text) > 500 else products_text
                                     })
-                        
                         if products_data:
                             products_df = pd.DataFrame(products_data)
                             products_df.to_excel(writer, sheet_name="Produits_Services", index=False)
-            
             out.seek(0)
             st.download_button(
                 "📥 Télécharger Excel",
@@ -1818,10 +1877,8 @@ if comparison_entities:
                 file_name=f"comparaison_{primary_entity_name}_{len(comparison_entities)}_entites.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
 if st.button("🗑️ Vider les suggestions automatiques"):
     if 'comparison_suggestions' in st.session_state:
         del st.session_state.comparison_suggestions
     st.rerun()
-
 group_manager.save_session()

@@ -191,6 +191,7 @@ fig_pie.update_layout(
 )
 fig_pie.update_traces(marker=dict(line=dict(color='white', width=2)))
 st.plotly_chart(fig_pie, use_container_width=True)
+
 def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix=None):
     ca_yearly = df_sector[ca_cols].sum().reset_index()
     ca_yearly.columns = ["Année", "CA"]
@@ -328,6 +329,7 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         tickformat="d"
     )
     st.plotly_chart(fig, use_container_width=True)
+
 st.markdown("---")
 st.header("B. Vue sectorielle individuelle")
 selected_sector = st.selectbox("Choisir un secteur à visualiser:", sorted(df['Secteur'].unique()))
@@ -745,7 +747,6 @@ for var, config in cagr_variables.items():
         st.info(f"Aucune donnée pour calculer {label}")
         continue
     
-    # Use pre-calculated CAGRs
     sector_cagrs = pd.DataFrame.from_dict(cagr_data[cagr_key], orient='index', columns=[label]).reset_index()
     sector_cagrs.columns = ["Secteur", label]
     sector_cagrs = sector_cagrs.set_index("Secteur").reindex(sector_order).reset_index().fillna(np.nan)
