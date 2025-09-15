@@ -53,22 +53,27 @@ def format_dirhams(value):
     else:
         return f"{value:.0f} Dhs"
 
-def calculate_cagr(start, end, periods):
+def calculate_cagr(values, n_years=None):
     try:
-        start = float(start) if pd.notna(start) else 0.0
-        end = float(end) if pd.notna(end) else 0.0
-        periods = float(periods) if pd.notna(periods) else 3
-        if periods <= 0:
-            periods = 3
-        if start <= 0:
+        valid_values = [v for v in values if pd.notna(v) and isinstance(v, (int, float)) and v > 0]
+        if len(valid_values) < 2:
             return np.nan
-        if end <= 0:
+        start_val = valid_values[0]
+        end_val = valid_values[-1]
+
+        if n_years is None:
+            n_years = len(values) - 1
+        else:
+            n_periods = len(valid_values) - 1
+            if n_periods > 0:
+                n_years = n_periods        
+        if start_val <= 0 or end_val <= 0 or n_years <= 0:
             return np.nan
-        cagr = (end / start) ** (1 / periods) - 1
+        cagr = (end_val / start_val) ** (1 / n_years) - 1
         return float(cagr)
     except Exception:
-        return 0.0
-
+        return np.nan
+    
 def precalculate_sector_cagrs(df):
     years = [2020, 2021, 2022, 2023]
     cagr_data = {}
@@ -94,7 +99,7 @@ def precalculate_sector_cagrs(df):
                 start_val = sector_values[0]
                 end_val = sector_values[-1]
                 if pd.notna(start_val) and pd.notna(end_val) and start_val > 0:
-                    cagr = calculate_cagr(start_val, end_val, len(years)-1)
+                    cagr = calculate_cagr(sector_values, len(years)-1)
                     cagr_data[f"{var_name}_CAGR"][sector] = cagr
                 else:
                     cagr_data[f"{var_name}_CAGR"][sector] = np.nan
@@ -110,7 +115,7 @@ def precalculate_sector_cagrs(df):
                 start_val = sector_values[0]
                 end_val = sector_values[-1]
                 if pd.notna(start_val) and pd.notna(end_val):
-                    cagr = calculate_cagr(start_val, end_val, len(years)-1)
+                    cagr = calculate_cagr(sector_values, len(years)-1)
                     cagr_data[f"{var_name}_CAGR"][sector] = cagr
                 else:
                     cagr_data[f"{var_name}_CAGR"][sector] = np.nan

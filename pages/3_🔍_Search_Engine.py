@@ -113,41 +113,6 @@ def compute_raw_fuzzy_scores(seed_tokens: List[str], cand_tokens: List[str], thr
     
     return raw_scores
 
-def generate_product_comment(seed_tokens: List[str], cand_tokens: List[str], raw_scores: List[float], threshold: float) -> str:
-    if not seed_tokens or not cand_tokens:
-        return "Pas de produits pour comparaison"
-    
-    matched_indices = [i for i, score in enumerate(raw_scores) if score >= threshold]
-    matched_seed_tokens = [seed_tokens[i] for i in matched_indices]
-    matched_cand_tokens = []
-    
-    for s_idx in matched_indices:
-        s_token = seed_tokens[s_idx]
-        for c_token in cand_tokens:
-            if fuzzy_ratio(s_token, c_token) >= threshold:
-                matched_cand_tokens.append(c_token)
-                break
-    
-    if not matched_indices:
-        return "Aucun produit similaire trouvé"
-    
-    overlap_ratio = len(set(matched_seed_tokens)) / len(seed_tokens)
-    unique_matches = len(set(matched_cand_tokens))
-    
-    if overlap_ratio >= 0.8:
-        comment = f"Fort chevauchement ({len(matched_seed_tokens)}/{len(seed_tokens)} produits similaires)"
-    elif overlap_ratio >= 0.5:
-        comment = f"Chevauchement modéré ({len(matched_seed_tokens)}/{len(seed_tokens)} produits similaires)"
-    else:
-        comment = f"Chevauchement faible ({len(matched_seed_tokens)}/{len(seed_tokens)} produits similaires)"
-    
-    if unique_matches > 1:
-        comment += f" - Focus sur {unique_matches} domaines"
-    elif unique_matches == 1:
-        comment += f" - Spécialisation sur 1 domaine principal"
-    
-    return comment
-
 def frac_str(m: int, t: int) -> str:
     if t == 0:
         return "0/0 (N/A)"
@@ -203,49 +168,48 @@ def format_range_compact(mi, ma) -> str:
         return compact_num(mi)
     return f"de {compact_num(mi)} à {compact_num(ma)}"
 
-def parse_revenue_text(s: str) -> Tuple[float, float]:
+import re
+import numpy as np
+import pandas as pd
+from typing import Tuple, Union
+
+
+def parse_revenue_text(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
     if pd.isna(s):
         return np.nan, np.nan
+
     raw = str(s).strip()
-    if raw == "":
+    if raw == "" or raw.lower() in ['n/a', 'non disponible', 'non communiqué']:
         return np.nan, np.nan
-    low = np.nan
-    high = np.nan
-    number_pattern = r'[\d]+(?:[.,]\d{3})*(?:[.,]\d+)?'
-    low_candidates = re.findall(number_pattern, raw)
+
+    raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
+    raw_lower = raw_clean.lower()
+
+    number_pattern = r'\d+(?:[.,]\d{3})*(?:[.,]\d+)?'
+    numbers = re.findall(number_pattern, raw_clean)
+
     norm_nums = []
-    for num in low_candidates:
+    for num in numbers:
         if ',' in num and '.' in num:
             num = num.replace('.', '').replace(',', '.')
-        elif ',' in num:
-            if len(num.split(',')[1]) > 2:
-                num = num.replace(',', '.')
-            else:
-                num = num.replace(',', '')
-        elif '.' in num:
-            num = num
+        else:
+            num = num.replace('.', '').replace(',', '')
         try:
-            norm_nums.append(float(num))
-        except:
+            norm_nums.append(int(float(num)))
+        except ValueError:
             pass
-    raw_lower = raw.lower()
-    if len(norm_nums) >= 2 and ("à" in raw_lower or "-" in raw_lower or "to" in raw_lower or "de" in raw_lower):
-        low = float(norm_nums[0])
-        high = float(norm_nums[1])
-        return low, high
-    if "inférieur" in raw_lower or "inferieur" in raw_lower or "moins de" in raw_lower or "inf" in raw_lower:
-        if len(norm_nums) >= 1:
-            high = float(norm_nums[0])
-            low = 0.0
-            return low, high
-    if "supérieur" in raw_lower or "superieur" in raw_lower or "plus de" in raw_lower or ">" in raw_lower:
-        if len(norm_nums) >= 1:
-            low = float(norm_nums[0])
-            high = np.nan
-            return low, high
+    if "de" in raw_lower and "à" in raw_lower and len(norm_nums) >= 2:
+        return min(norm_nums), max(norm_nums)
+    if any(word in raw_lower for word in ["inférieur", "inferieur", "moins de"]) and len(norm_nums) >= 1:
+        return 0, norm_nums[0]
+    if any(word in raw_lower for word in ["supérieur", "superieur", "plus de"]) and len(norm_nums) >= 1:
+        return norm_nums[0], np.nan
+    if "entre" in raw_lower and len(norm_nums) >= 2:
+        return min(norm_nums), max(norm_nums)
     if len(norm_nums) == 1:
-        val = float(norm_nums[0])
-        return val, val
+        return norm_nums[0], norm_nums[0]
+    if len(norm_nums) >= 2:
+        return min(norm_nums), max(norm_nums)
     return np.nan, np.nan
 
 def find_numeric_columns(df: pd.DataFrame) -> List[str]:
@@ -513,19 +477,24 @@ def prepare_df_with_years(df, selected_years, is_companies=False):
     else:
         revenue_candidates = [
             "Chiffre d'affaires 2023 (Dhs)", "Chiffre d'affaires 2023 (Dhs) ", "Chiffre d'affaires 2023",
-            "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) "
+            "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) ",
+            "Chiffre d'Affaires"
         ]
         rev_col = get_col(df, revenue_candidates)
         info['revenue_col'] = rev_col
+        if not rev_col:
+            for c in df.columns:
+                c_lower = str(c).lower()
+                if 'chiffre' in c_lower and 'affair' in c_lower:
+                    rev_col = c
+                    info['revenue_col'] = rev_col
+                    break
+        
         if rev_col:
             df['_revenue_raw'] = df[rev_col]
         else:
-            for c in df.columns:
-                if 'chiffre' in c.lower():
-                    rev_col = c
-                    df['_revenue_raw'] = df[c]
-                    info['revenue_col'] = rev_col
-                    break
+            df['_revenue_raw'] = np.nan
+            st.warning(f"Aucune colonne CA trouvée dans {rev_col}")
     if '_revenue_raw' not in df.columns:
         df['_revenue_raw'] = np.nan
     mins = []
@@ -1109,16 +1078,24 @@ def compute_matches_for_df(df, label):
     if use_ca_filter:
         sel_min = float(ca_min_sel)
         sel_max = float(ca_max_sel)
-        mask_revenue = (~candidates['_revenue_min'].isna()) & (~candidates['_revenue_max'].isna())
-        mask_revenue_overlap = mask_revenue & (candidates['_revenue_max'] >= sel_min) & (candidates['_revenue_min'] <= sel_max)
+        has_ca_data = (candidates['_revenue_min'].notna()) | (candidates['_revenue_max'].notna())
+        ca_overlap = (
+            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].notna()) & 
+            (candidates['_revenue_max'] >= sel_min) & (candidates['_revenue_min'] <= sel_max)) |
+            
+            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].isna()) & 
+            (candidates['_revenue_min'] <= sel_max)) |
+            
+            ((candidates['_revenue_max'].notna()) & (candidates['_revenue_min'].isna()) & 
+            (candidates['_revenue_max'] >= sel_min))
+        )
+        mask_revenue_overlap = has_ca_data & ca_overlap
         candidates = candidates[mask_revenue_overlap & mask_city & mask_sector].reset_index(drop=True)
     else:
         candidates = candidates[mask_city & mask_sector].reset_index(drop=True)
-    
     if use_re_filter:
         mask_operating = (candidates['_operating_income'] >= re_min_sel) & (candidates['_operating_income'] <= re_max_sel)
         candidates = candidates[mask_operating].reset_index(drop=True)
-    
     try:
         if seed_name_for_exclusion and '_display_name' in candidates.columns:
             candidates = candidates[candidates['_display_name'].astype(str) != str(seed_name_for_exclusion)]
@@ -1128,10 +1105,8 @@ def compute_matches_for_df(df, label):
     candidates = candidates.reset_index(drop=True)
     if candidates.shape[0] == 0:
         return candidates, []
-    
     seed_prods_dedup = []
     seed_prods_full = []
-    
     if seed_row is not None:
         if search_mode == "Entreprise unique":
             seed_prods_dedup, seed_prods_full = extract_seed_tokens(seed_row)
@@ -1230,7 +1205,7 @@ def compute_matches_for_df(df, label):
     display_cols = []
     if '_display_name' in candidates.columns:
         display_cols.append('_display_name')
-    display_cols += ['product_fraction_str', 'duplicate_fraction_str', 'product_comment']
+    display_cols += ['product_fraction_str']
     candidates['_CA_display'] = candidates.apply(lambda r: format_range_compact(r['_revenue_min'], r['_revenue_max']), axis=1)
     display_cols.append('_CA_display')
     candidates['_OP_display'] = candidates['_operating_income'].apply(lambda x: compact_num(x))
@@ -1243,6 +1218,7 @@ def compute_matches_for_df(df, label):
         years_str = ', '.join(map(str, selected_years))
         candidates['_Year_display'] = f"Données {years_str}"
         display_cols.append('_Year_display')
+    display_cols += ['duplicate_fraction_str', 'product_comment']
     
     return candidates, display_cols
 
@@ -1252,12 +1228,13 @@ with tabs[0]:
         st.warning("Fichier companies.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({
-            "seed_name": seed_name_for_exclusion, 
-            "seed_products_dedup": seed_prods_dedup, 
-            "seed_products_full": seed_prods_full,
-            "dedup_count": len(seed_prods_dedup),
-            "full_count": len(seed_prods_full)
+        with st.expander("Info Seed", expanded=False):
+            st.write({
+                "seed_name": seed_name_for_exclusion, 
+                "seed_products_without_duplicates": seed_prods_dedup, 
+                "seed_products_with_duplicates": seed_prods_full,
+                "count_without_duplicates": len(seed_prods_dedup),
+                "full_count": len(seed_prods_full)
         })
         candidates, display_cols = compute_matches_for_df(df_companies_prepared, "Base totale")
         if candidates is None or candidates.shape[0] == 0:
@@ -1267,34 +1244,35 @@ with tabs[0]:
             rename_map = {
                 '_display_name': 'Raison Sociale',
                 'product_fraction_str': 'Matching Score (Produits)',
-                'duplicate_fraction_str': 'Matching Score (avec doublons)',
-                'product_comment': 'Commentaire Produits',
+                '_City_display': "Ville",
+                '_Sector_display': "Secteur",
                 '_CA_display': "Chiffre d'affaires",
                 '_OP_display': "Résultat d'exploitation",
-                '_City_display': "Ville",
-                '_Sector_display': "Secteur"
+                'duplicate_fraction_str': 'Matching Score (avec doublons)',
+                'product_comment': 'Commentaire Produits,',
             }
             if '_Year_display' in display_cols:
                 rename_map['_Year_display'] = "Année(s) des données"
             st.dataframe(candidates.head(int(top_n_preview))[display_cols].fillna("").rename(columns=rename_map))
             out = io.BytesIO()
-            with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
             out.seek(0)
             st.download_button("📥 Télécharger résultats (Base totale)", data=out, file_name="base_totale_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tabs[1]:
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
     st.markdown("### Onglet: Kerix")
     if df_kerix_prepared is None:
         st.warning("Fichier kerix.xlsx non chargé.")
     else:
         st.markdown("#### Seed utilisée")
-        st.write({
-            "seed_name": seed_name_for_exclusion, 
-            "seed_products_dedup": seed_prods_dedup, 
-            "seed_products_full": seed_prods_full,
-            "dedup_count": len(seed_prods_dedup),
-            "full_count": len(seed_prods_full)
+        with st.expander("Info Seed", expanded=False):
+            st.write({
+                "seed_name": seed_name_for_exclusion, 
+                "seed_products_without_duplicates": seed_prods_dedup, 
+                "seed_products_with_duplicates": seed_prods_full,
+                "count_without_duplicates": len(seed_prods_dedup),
+                "full_count": len(seed_prods_full)
         })
         candidates_k, display_cols_k = compute_matches_for_df(df_kerix_prepared, "Kerix")
         if candidates_k is None or candidates_k.shape[0] == 0:
@@ -1304,12 +1282,12 @@ with tabs[1]:
             rename_map = {
                 '_display_name': 'Raison Sociale',
                 'product_fraction_str': 'Matching Score (Produits)',
-                'duplicate_fraction_str': 'Matching Score (avec doublons)',
-                'product_comment': 'Commentaire Produits',
                 '_CA_display': "Chiffre d'affaires",
                 '_OP_display': "Résultat d'exploitation",
                 '_City_display': "Ville",
-                '_Sector_display': "Secteur"
+                '_Sector_display': "Secteur",
+                'duplicate_fraction_str': 'Matching Score (avec doublons)',
+                'product_comment': 'Commentaire Produits',
             }
             if '_Year_display' in display_cols_k:
                 rename_map['_Year_display'] = "Année(s) des données"
