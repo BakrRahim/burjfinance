@@ -663,7 +663,7 @@ def calculate_cagr(values, n_years=None):
             n_periods = len(valid_values) - 1
             if n_periods > 0:
                 n_years = n_periods        
-        if start_val <= 0 or end_val <= 0 or n_years <= 0:
+        if start_val <= 0 or end_val <= 0 or n_years <= 2:
             return np.nan
         cagr = (end_val / start_val) ** (1 / n_years) - 1
         return float(cagr)
@@ -1281,72 +1281,28 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
 
     st.markdown("##### 🔍 Filtre CA 2023")
     ca_2023_col = get_column_for("CA", 2023)
-    if ca_2023_col and ca_2023_col in df.columns:
-        all_ca_values = safe_to_numeric(df[ca_2023_col].dropna())
-        global_max_ca = float(all_ca_values.max()) if len(all_ca_values) > 0 else 10000000000
-        
-        seed_mean_ca = 0
-        if primary_entity_name:
-            seed_is_group = primary_entity_name in group_manager.groups
-            seed_ca_values = []
-            
-            if seed_is_group:
-                group_companies = group_manager.groups[primary_entity_name].get('companies', [])
-                for company in group_companies:
-                    comp_df = safe_find_company(df, company, COMPANY_COL)
-                    if not comp_df.empty:
-                        for year in YEARS:
-                            col = get_column_for("CA", year)
-                            if col and col in comp_df.columns:
-                                ca_val = safe_to_numeric(comp_df.iloc[0][col])
-                                if pd.notna(ca_val) and ca_val > 0:
-                                    seed_ca_values.append(float(ca_val))
-            else:
-                comp_df = safe_find_company(df, primary_entity_name, COMPANY_COL)
-                if not comp_df.empty:
-                    for year in YEARS:
-                        col = get_column_for("CA", year)
-                        if col and col in comp_df.columns:
-                            ca_val = safe_to_numeric(comp_df.iloc[0][col])
-                            if pd.notna(ca_val) and ca_val > 0:
-                                seed_ca_values.append(float(ca_val))
-            
-            if seed_ca_values:
-                seed_mean_ca = float(np.mean(seed_ca_values))
-            else:
-                seed_mean_ca = 0
-        else:
-            seed_mean_ca = float(all_ca_values.mean()) if len(all_ca_values) > 0 else 0
-        default_min = int(seed_mean_ca) if seed_mean_ca > 0 else 0
-        default_max = int(global_max_ca)
+    all_ca_values = safe_to_numeric(df[ca_2023_col].dropna())
+    global_max_ca = float(all_ca_values.max()) if len(all_ca_values) > 0 else 10000000000
+    default_min = 0
+    default_max = int(global_max_ca)
 
-        col_min, col_max = st.columns(2)
-        with col_min:
-            ca_min = st.number_input(
-                "CA minimum (MAD)", 
-                value=default_min, 
-                min_value=0, 
-                step=1000000, 
-                help=f"Basé sur la moyenne CA de l'entité de référence: {format_number(seed_mean_ca)}",
-                key="ca_min"
-            )
-        with col_max:
-            ca_max = st.number_input(
-                "CA maximum (MAD)", 
-                value=default_max, 
-                min_value=0, 
-                step=1000000, 
-                help=f"Maximum global CA: {format_number(global_max_ca)}",
-                key="ca_max"
-            )
-    else:
-        ca_min = 0
-        ca_max = 10000000000
-        col_min, col_max = st.columns(2)
-        with col_min:
-            ca_min = st.number_input("CA minimum (MAD)", value=0, step=1000000, key="ca_min")
-        with col_max:
-            ca_max = st.number_input("CA maximum (MAD)", value=10000000000, step=1000000, key="ca_max")
+    col_min, col_max = st.columns(2)
+    with col_min:
+        ca_min = st.number_input(
+            "CA minimum (MAD)", 
+            value=default_min, 
+            min_value=0, 
+            step=1000000, 
+            key="ca_min"
+        )
+    with col_max:
+        ca_max = st.number_input(
+            "CA maximum (MAD)", 
+            value=default_max, 
+            min_value=0, 
+            step=1000000,
+            key="ca_max"
+        )
 
     suggested_companies = []
     suggestion_threshold = 0.75
@@ -1788,7 +1744,6 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
     )
     st.plotly_chart(fig, use_container_width=True)
 if comparison_entities:
-    st.markdown(f"iii. Beginning of plots")
     col1, col2, col3 = st.columns([1, 8, 1])
     if 'comparison_suggestions' in st.session_state and primary_entity_name:
         suggestion_scores = []
