@@ -27,6 +27,168 @@ except Exception:
             return 0.0
         return difflib.SequenceMatcher(None, a, b).ratio()
 
+def calculate_cagr(values, n_years=None):
+    try:
+        valid_values = [v for v in values if pd.notna(v) and isinstance(v, (int, float)) and v > 0]
+        if len(valid_values) < 2:
+            return np.nan
+        start_val = valid_values[0]
+        end_val = valid_values[-1]
+
+        if n_years is None:
+            n_years = len(values) - 1
+        else:
+            n_periods = len(valid_values) - 1
+            if n_periods > 0:
+                n_years = n_periods        
+        if start_val <= 0 or end_val <= 0 or n_years <= 2:
+            return np.nan
+        cagr = (end_val / start_val) ** (1 / n_years) - 1
+        return float(cagr)
+    except Exception:
+        return np.nan
+
+def get_company_sector(company_name, df, company_col, sector_col):
+    if company_name and sector_col and sector_col in df.columns:
+        comp_df = safe_find_company(df, company_name, company_col)
+        if not comp_df.empty and sector_col in comp_df.columns:
+            return str(comp_df.iloc[0][sector_col]).strip()
+    return None
+
+def get_group_sector(group_companies, df, company_col, sector_col):
+    if not group_companies:
+        return None
+    sectors = []
+    for company in group_companies:
+        sector = get_company_sector(company, df, company_col, sector_col)
+        if sector:
+            sectors.append(sector)
+    if sectors:
+        from collections import Counter
+        sector_counts = Counter(sectors)
+        return sector_counts.most_common(1)[0][0]
+    return None
+
+def get_sector_margin_values(sector_name, df, margin_type, years):
+    if not sector_name or df.empty or SECTOR_COL not in df.columns:
+        return [np.nan] * len(years)
+    
+    sector_df = df[df[SECTOR_COL] == sector_name]
+    if sector_df.empty:
+        return [np.nan] * len(years)
+    
+    if margin_type == "EBIT_CA":
+        cols = [f"Marge EBIT/CA {y}" for y in years]
+    elif margin_type == "EBIT_CP":
+        cols = [f"Marge EBIT/CP {y}" for y in years]
+    elif margin_type == "CP_CA":
+        cols = [f"Marge CP/CA {y}" for y in years]
+    else:
+        return [np.nan] * len(years)
+    
+    available_cols = [col for col in cols if col in sector_df.columns]
+    if not available_cols:
+        return [np.nan] * len(years)
+    
+    values = []
+    for col in cols:
+        if col in sector_df.columns:
+            valid_values = safe_to_numeric(sector_df[col].dropna())
+            if len(valid_values) > 0:
+                avg_value = valid_values.mean()
+                values.append(avg_value)
+            else:
+                values.append(np.nan)
+        else:
+            values.append(np.nan)
+    
+    return values
+
+def get_sector_financial_values(sector_name, df, metric_key, years):
+    if not sector_name or df.empty or SECTOR_COL not in df.columns:
+        return [np.nan] * len(years)
+    
+    sector_df = df[df[SECTOR_COL] == sector_name]
+    if sector_df.empty:
+        return [np.nan] * len(years)
+    
+    values = []
+    for year in years:
+        if metric_key == "CA":
+            col = f"Chiffre d'affaires {year} (Dhs)"
+        elif metric_key == "RE":
+            col = f"Resultat d'exploitation {year} (Dhs)"
+        elif metric_key == "CP":
+            col = f"Charges personnel {year}"
+        else:
+            values.append(np.nan)
+            continue
+        
+        if col in sector_df.columns:
+            valid_values = safe_to_numeric(sector_df[col].dropna())
+            if len(valid_values) > 0:
+                total_value = valid_values.sum()
+                values.append(total_value)
+            else:
+                values.append(np.nan)
+        else:
+            values.append(np.nan)
+    
+    return values
+
+def get_sector_cagr(sector_name, metric_key, years):
+    if not sector_cagr_data or sector_name not in sector_cagr_data.get(f"{metric_key}_CAGR", {}):
+        return np.nan
+    
+    cagr_value = sector_cagr_data[f"{metric_key}_CAGR"].get(sector_name, np.nan)
+    return cagr_value if not pd.isna(cagr_value) else np.nan
+
+def precalculate_sector_cagrs(df):
+    years = [2020, 2021, 2022, 2023]
+    cagr_data = {}
+    
+    financial_vars = {
+        "Chiffre d'affaires": [f"Chiffre d'affaires {y} (Dhs)" for y in years],
+        "Resultat d'exploitation": [f"Resultat d'exploitation {y} (Dhs)" for y in years],
+        "Charges personnel": [f"Charges personnel {y}" for y in years]
+    }
+    
+    margin_vars = {
+        "Marge EBIT/CA": [f"Marge EBIT/CA {y}" for y in years],
+        "Marge EBIT/CP": [f"Marge EBIT/CP {y}" for y in years],
+        "Marge CP/CA": [f"Marge CP/CA {y}" for y in years]
+    }
+    
+    for var_name, cols in financial_vars.items():
+        if all(col in df.columns for col in cols):
+            sector_sums = df.groupby("Secteur")[cols].sum()
+            cagr_data[f"{var_name}_CAGR"] = {}
+            for sector in sector_sums.index:
+                sector_values = sector_sums.loc[sector].values
+                if len(sector_values) == len(years) and not np.all(np.isnan(sector_values)):
+                    cagr = calculate_cagr(sector_values, len(years)-1)
+                    cagr_data[f"{var_name}_CAGR"][sector] = cagr if not pd.isna(cagr) else np.nan
+                else:
+                    cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+
+    for var_name, cols in margin_vars.items():
+        if all(col in df.columns for col in cols):
+            sector_means = df.groupby("Secteur")[cols].mean()
+            cagr_data[f"{var_name}_CAGR"] = {}
+            for sector in sector_means.index:
+                sector_values = sector_means.loc[sector].values
+                if len(sector_values) == len(years) and not np.all(np.isnan(sector_values)):
+                    cagr = calculate_cagr(sector_values, len(years)-1)
+                    cagr_data[f"{var_name}_CAGR"][sector] = cagr if not pd.isna(cagr) else np.nan
+                else:
+                    cagr_data[f"{var_name}_CAGR"][sector] = np.nan
+    
+    return cagr_data
+
+@st.cache_data(ttl=300)
+def get_sector_cagr_data(df):
+    return precalculate_sector_cagrs(df)
+
 def split_tokens(text: str) -> List[str]:
     if pd.isna(text):
         return []
@@ -520,6 +682,11 @@ if os.path.exists(DATA_PATH):
         st.error(f"Erreur lecture {DATA_PATH}: {e}")
         df = None
 
+if df is not None and not df.empty:
+    sector_cagr_data = get_sector_cagr_data(df)
+else:
+    sector_cagr_data = {}
+
 if df is None:
     uploaded_file = st.file_uploader("📂 Téléversez le fichier Excel (si 'companies.xlsx' absent)", type=["xlsx"])
     if uploaded_file:
@@ -649,27 +816,6 @@ sector_df = df
 
 st.markdown("---")
 
-def calculate_cagr(values, n_years=None):
-    try:
-        valid_values = [v for v in values if pd.notna(v) and isinstance(v, (int, float)) and v > 0]
-        if len(valid_values) < 2:
-            return np.nan
-        start_val = valid_values[0]
-        end_val = valid_values[-1]
-
-        if n_years is None:
-            n_years = len(values) - 1
-        else:
-            n_periods = len(valid_values) - 1
-            if n_periods > 0:
-                n_years = n_periods        
-        if start_val <= 0 or end_val <= 0 or n_years <= 2:
-            return np.nan
-        cagr = (end_val / start_val) ** (1 / n_years) - 1
-        return float(cagr)
-    except Exception:
-        return np.nan
-    
 st.markdown("### 👥 Gestion des Groupes")
 with st.container():
     col1, col2 = st.columns([3, 1])
@@ -771,6 +917,7 @@ if display_mode == "Entreprise individuelle":
         if comp_df.empty:
             st.write("Entreprise non trouvée.")
         else:
+            company_sector = get_company_sector(company_single, df, COMPANY_COL, SECTOR_COL)
             ca_col = f"Chiffre d'affaires {metric_display_year} (Dhs)"
             re_col = f"Resultat d'exploitation {metric_display_year} (Dhs)"
             cp_col = f"Charges personnel {metric_display_year}"
@@ -800,6 +947,12 @@ if display_mode == "Entreprise individuelle":
             ca_values = []
             re_values = []
             cp_values = []
+            sector_ca_values = get_sector_financial_values(company_sector, df, "CA", YEARS) if company_sector else [np.nan] * len(YEARS)
+            sector_re_values = get_sector_financial_values(company_sector, df, "RE", YEARS) if company_sector else [np.nan] * len(YEARS)
+            sector_marge_values = get_sector_margin_values(company_sector, df, "EBIT_CA", YEARS) if company_sector else [np.nan] * len(YEARS)
+            sector_cagr_ca = get_sector_cagr(company_sector, "Chiffre d'affaires", YEARS) if company_sector else np.nan
+            sector_cagr_re = get_sector_cagr(company_sector, "Resultat d'exploitation", YEARS) if company_sector else np.nan
+            sector_cagr_marge = get_sector_cagr(company_sector, "Marge EBIT/CA", YEARS) if company_sector else np.nan
             for col in ca_cols:
                 if col in comp_df.columns:
                     ca_values.append(comp_df[col].iloc[0] if pd.notna(comp_df[col].iloc[0]) else 0)
@@ -870,6 +1023,37 @@ if display_mode == "Entreprise individuelle":
                 bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
                 borderwidth=1, borderpad=4,
             )
+            if company_sector and any(pd.notna(v) for v in sector_marge_values):
+                fig.add_trace(go.Scatter(
+                    x=YEARS,
+                    y=[v * 100 if pd.notna(v) else np.nan for v in sector_marge_values],
+                    mode="lines+text",
+                    name=f"{company_sector} - Marge moyenne",
+                    line=dict(shape='spline', color="#28a745", width=3),
+                    hovertemplate=f"{company_sector}<br>%{{x}}<br>Marge moyenne: %{{y:.1f}}%<extra></extra>",
+                    textposition="top center",
+                    textfont=dict(size=18),
+                    yaxis="y2"
+                ))
+            if company_sector:
+                if pd.notna(sector_cagr_ca):
+                    fig.add_annotation(
+                        text=f"CAGR CA Secteur: {(sector_cagr_ca*100):.2f}%",
+                        xref="paper", yref="paper", x=0.25, y=1.15,
+                        showarrow=False,
+                        font=dict(size=14, color="#28a745"),
+                        bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                        borderwidth=1, borderpad=4,
+                    )
+                if pd.notna(sector_cagr_re):
+                    fig.add_annotation(
+                        text=f"CAGR RE Secteur: {(sector_cagr_re*100):.2f}%",
+                        xref="paper", yref="paper", x=0.70, y=1.15,
+                        showarrow=False,
+                        font=dict(size=14, color="#28a745"),
+                        bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                        borderwidth=1, borderpad=4,
+                    )
             fig.update_layout(
                 title=dict(text=f"CA & RE avec Marge EBIT/CA - {company_single}", font=dict(size=22)),
                 xaxis=dict(tickmode="array", tickvals=YEARS, title="Année", showgrid=False, tickfont=dict(size=18)),
@@ -952,12 +1136,48 @@ if display_mode == "Entreprise individuelle":
                     ))
                 fig.add_annotation(
                     text=f"CAGR: {(calculate_cagr(values, n_years)*100):.2f}%",
-                    xref="paper", yref="paper", x=0.5, y=1.15,
+                    xref="paper", yref="paper", x=0.3, y=1.12,
                     showarrow=False,
                     font=dict(size=16, color="black"),
                     bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
                     borderwidth=1, borderpad=4,
                 )
+                
+                is_margin = "Marge" in title
+                if company_sector:
+                    if is_margin and "EBIT/CA" in title:
+                        sector_values = get_sector_margin_values(company_sector, df, "EBIT_CA", YEARS[:len(values)])
+                        sector_cagr_key = "Marge EBIT/CA"
+                    elif is_margin and "EBIT/CP" in title:
+                        sector_values = get_sector_margin_values(company_sector, df, "EBIT_CP", YEARS[:len(values)])
+                        sector_cagr_key = "Marge EBIT/CP"
+                    elif is_margin and "CP/CA" in title:
+                        sector_values = get_sector_margin_values(company_sector, df, "CP_CA", YEARS[:len(values)])
+                        sector_cagr_key = "Marge CP/CA"
+                    elif title == "Chiffre d'affaires":
+                        sector_values = get_sector_financial_values(company_sector, df, "CA", YEARS[:len(values)])
+                        sector_cagr_key = "Chiffre d'affaires"
+                    elif title == "Résultat d'exploitation":
+                        sector_values = get_sector_financial_values(company_sector, df, "RE", YEARS[:len(values)])
+                        sector_cagr_key = "Resultat d'exploitation"
+                    elif title == "Charges personnel":
+                        sector_values = get_sector_financial_values(company_sector, df, "CP", YEARS[:len(values)])
+                        sector_cagr_key = "Charges personnel"
+                    else:
+                        sector_values = [np.nan] * len(values)
+                        sector_cagr_key = None
+                    
+                    if sector_cagr_key:
+                        sector_cagr = get_sector_cagr(company_sector, sector_cagr_key, YEARS[:len(values)])
+                if company_sector and sector_cagr_key and pd.notna(sector_cagr):
+                    fig.add_annotation(
+                        text=f"CAGR {company_sector}: {(sector_cagr*100):.2f}%",
+                        xref="paper", yref="paper", x=0.75, y=1.12,
+                        showarrow=False,
+                        font=dict(size=14, color="#28a745"),
+                        bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                        borderwidth=1, borderpad=4,
+                    )
                 fig.update_layout(
                     title=dict(text=f"{title} - {company_single}", font=dict(size=18)),
                     barmode="group",

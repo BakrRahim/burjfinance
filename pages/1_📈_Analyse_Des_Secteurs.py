@@ -404,8 +404,8 @@ if charges_yearly.shape[0] >= 2:
     st.plotly_chart(fig2, use_container_width=True)
 marge_variables = {
     "Marge EBIT/CA": [f"Marge EBIT/CA {y}" for y in range(2020, 2024)],
+    "Marge EBIT/CP": [f"Marge EBIT/CP {y}" for y in range(2020, 2024)],
     "Marge CP/CA": [f"Marge CP/CA {y}" for y in range(2020, 2024)],
-    "Marge EBIT/CP": [f"Marge EBIT/CP {y}" for y in range(2020, 2024)]
 }
 label = {
     "Marge EBIT/CA": "iii",
