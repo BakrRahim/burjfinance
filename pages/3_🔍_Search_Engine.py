@@ -216,52 +216,64 @@ def parse_companies_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float
         return min(norm_nums), max(norm_nums)
     return np.nan, np.nan
 
-def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
+def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[int, int]:
     if pd.isna(s):
         return np.nan, np.nan
+    
     raw = str(s).strip()
-    if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '']:
+    if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '', 'non défini', 'non communiqué']:
         return np.nan, np.nan
-    raw_lower = raw.lower()
-    raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
-    number_pattern = r'\b(\d{1,3}(?:,\d{3})*(?:,\d{1,2})?)\b'
-    numbers = re.findall(number_pattern, raw_clean)    
-    norm_nums = []
-    for num in numbers:
+    raw_lower = raw.lower().strip()
+    cleaned = re.sub(r'\s*(dh[s]?|mad|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
+    comma_pattern = r'(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)'
+    comma_numbers = re.findall(comma_pattern, cleaned)
+    simple_pattern = r'(\d+(?:\.\d+)?)'
+    simple_numbers = re.findall(simple_pattern, cleaned)
+    parsed_numbers = []
+    for num_str in comma_numbers:
         try:
-            cleaned_num = num.replace(',', '')
-            value = float(cleaned_num)
-            if value == int(value):
-                norm_nums.append(int(value))
-            else:
-                norm_nums.append(value)
+            clean_num = re.sub(r',', '', num_str)
+            value = int(clean_num)
+            parsed_numbers.append(value)
         except (ValueError, TypeError):
             continue
+    # seen_values = set(parsed_numbers)
+    # for num_str in simple_numbers:
+    #     try:
+    #         value = int(num_str)
+    #         if value not in seen_values and value > 0:
+    #             parsed_numbers.append(value)
+    #             seen_values.add(value)
+    #     except (ValueError, TypeError):
+    #         continue
+    valid_numbers = sorted([n for n in parsed_numbers if n > 0 and not pd.isna(n)])
+    print(valid_numbers)
     if ("de" in raw_lower and "à" in raw_lower) or "entre" in raw_lower:
-        if len(norm_nums) >= 2:
-            return min(norm_nums), max(norm_nums)    
-        range_pattern = r'de\s+([^à]+?)\s+à\s+(.+?)(?=\s|$|dh)'
-        range_match = re.search(range_pattern, raw_lower, re.IGNORECASE)
-        if range_match:
-            try:
-                min_str = range_match.group(1).strip()
-                max_str = range_match.group(2).strip()
-                min_clean = re.sub(r'[^\d,]', '', min_str).replace(',', '')
-                max_clean = re.sub(r'[^\d,]', '', max_str).replace(',', '')
-                min_val = float(min_clean)
-                max_val = float(max_clean)
-                return int(min_val), int(max_val)
-            except (ValueError, TypeError):
-                pass
-    if any(word in raw_lower for word in ["inférieur", "inferieur", "moins de", "<"]) and len(norm_nums) >= 1:
-        return 0, norm_nums[0]
-    if any(word in raw_lower for word in ["supérieur", "superieur", "plus de", ">"]) and len(norm_nums) >= 1:
-        return norm_nums[0], np.nan
-    if len(norm_nums) == 1:
-        return norm_nums[0], norm_nums[0]
-    if len(norm_nums) >= 2:
-        return min(norm_nums), max(norm_nums)
-    return np.nan, np.nan
+        if len(valid_numbers) >= 2:
+            return valid_numbers[0], valid_numbers[1]
+        elif len(valid_numbers) == 1:
+            return valid_numbers[0], valid_numbers[0]
+        else:
+            return np.nan, np.nan
+
+    elif any(word in raw_lower for word in ["inférieur", "inferieur", "moins de"]):
+        if len(valid_numbers) >= 1:
+            return 0, valid_numbers[0]
+        else:
+            return 0, np.nan
+
+    elif any(word in raw_lower and "à" in raw_lower for word in ["supérieur", "superieur", "plus de"]):
+        if len(valid_numbers) >= 1:
+            return valid_numbers[0], np.nan
+        else:
+            return np.nan, np.nan
+    else:
+        if len(valid_numbers) == 1:
+            return valid_numbers[0], valid_numbers[0]
+        elif len(valid_numbers) >= 2:
+            return valid_numbers[0], valid_numbers[-1]
+        else:
+            return np.nan, np.nan
 
 def clean_operating_income(value, is_companies: bool = False) -> int:
     if pd.isna(value):
@@ -918,7 +930,7 @@ if group_manager.groups:
             if group_name not in group_manager.groups or 'companies' not in group_manager.groups[group_name]:
                 group_manager.groups[group_name] = {'name': group_name, 'companies': []}
                 group_manager.save_session()
-            
+
             group_data = group_manager.groups[group_name]
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
@@ -938,14 +950,14 @@ if group_manager.groups:
                             st.write(f"{status_icon} {company}")
                 else:
                     st.info("Aucune entreprise dans ce groupe")
-                
+
                 all_companies = []
                 if df_companies_prepared is not None and '_display_name' in df_companies_prepared.columns:
                     all_companies.extend(df_companies_prepared['_display_name'].dropna().astype(str).str.strip().unique().tolist())
                 if df_kerix_prepared is not None and '_display_name' in df_kerix_prepared.columns:
                     all_companies.extend(df_kerix_prepared['_display_name'].dropna().astype(str).str.strip().unique().tolist())
                 all_companies = sorted(list(set(all_companies)))
-                
+
                 grouped_companies = set()
                 for key in group_manager.company_to_group.keys():
                     if isinstance(key, str):
@@ -954,7 +966,7 @@ if group_manager.groups:
                 available_companies = [c for c in all_companies
                                      if c.strip() not in grouped_companies or
                                      group_manager.company_to_group.get(c.strip()) == group_name]
-                
+
                 if available_companies:
                     selected_to_add = st.multiselect(
                         "Ajouter des entreprises:",
