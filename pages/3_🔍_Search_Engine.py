@@ -219,11 +219,9 @@ def parse_companies_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float
 def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
     if pd.isna(s):
         return np.nan, np.nan
-    
     raw = str(s).strip()
     if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '']:
         return np.nan, np.nan
-    
     raw_lower = raw.lower()
     raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
     number_pattern = r'\b(\d{1,3}(?:,\d{3})*(?:,\d{1,2})?)\b'
@@ -239,7 +237,6 @@ def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], U
                 norm_nums.append(value)
         except (ValueError, TypeError):
             continue
-    
     if ("de" in raw_lower and "à" in raw_lower) or "entre" in raw_lower:
         if len(norm_nums) >= 2:
             return min(norm_nums), max(norm_nums)    
@@ -256,7 +253,6 @@ def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], U
                 return int(min_val), int(max_val)
             except (ValueError, TypeError):
                 pass
-    
     if any(word in raw_lower for word in ["inférieur", "inferieur", "moins de", "<"]) and len(norm_nums) >= 1:
         return 0, norm_nums[0]
     if any(word in raw_lower for word in ["supérieur", "superieur", "plus de", ">"]) and len(norm_nums) >= 1:
@@ -265,7 +261,6 @@ def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], U
         return norm_nums[0], norm_nums[0]
     if len(norm_nums) >= 2:
         return min(norm_nums), max(norm_nums)
-    
     return np.nan, np.nan
 
 def clean_operating_income(value, is_companies: bool = False) -> int:
