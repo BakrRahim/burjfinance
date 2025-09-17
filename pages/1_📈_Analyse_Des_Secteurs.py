@@ -409,8 +409,8 @@ marge_variables = {
 }
 label = {
     "Marge EBIT/CA": "iii",
-    "Marge CP/CA": "iv",
-    "Marge EBIT/CP": "v"
+    "Marge CP/CA": "v",
+    "Marge EBIT/CP": "iv"
 }
 for var_name, cols in marge_variables.items():
     sector_yearly = filtered_df[cols].mean().reset_index()
@@ -503,6 +503,82 @@ fig_sector_pie.update_layout(
 )
 fig_sector_pie.update_traces(textfont=dict(size=13))
 st.plotly_chart(fig_sector_pie, use_container_width=True)
+
+st.markdown("##### vii. Liste des entreprises du secteur")
+total_in_sector = len(sector_df)
+st.caption(f"*Affichage des {top_n_single} premières entreprises sur {total_in_sector} totales dans le secteur*")
+table_cols = [
+    "Entreprise", 
+    ca_column,
+    f"Resultat d'exploitation {selected_year} (Dhs)",
+    f"Charges personnel {selected_year}",
+    f"Marge EBIT/CA {selected_year}",
+    f"Marge EBIT/CP {selected_year}",
+    f"Marge CP/CA {selected_year}"
+]
+
+top_companies_table = sorted_sector_df.head(top_n_single)[table_cols].copy()
+
+def format_table_value(value, col_name):
+    if pd.isna(value):
+        return "-"
+    if any(keyword in col_name for keyword in ["Chiffre d'affaires", "Resultat d'exploitation", "Charges"]):
+        return format_dirhams(value)
+    elif any(keyword in col_name for keyword in ["Marge"]):
+        percentage_value = float(value) * 100
+        return f"{percentage_value:.1f}%"
+    else:
+        return f"{value:,.0f}"
+
+for col in table_cols[1:]:
+    top_companies_table[col] = top_companies_table[col].apply(
+        lambda x: format_table_value(x, col)
+    )
+
+top_companies_table = top_companies_table.sort_values(by=ca_column, ascending=False)
+
+st.dataframe(
+    top_companies_table,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Entreprise": st.column_config.TextColumn(
+            "Entreprise",
+            help="Nom de l'entreprise",
+            width="medium"
+        ),
+        ca_column: st.column_config.TextColumn(
+            f"CA {selected_year}",
+            help="Chiffre d'affaires",
+            width="medium"
+        ),
+        f"Resultat d'exploitation {selected_year} (Dhs)": st.column_config.TextColumn(
+            f"RE {selected_year}",
+            help="Résultat d'exploitation",
+            width="medium"
+        ),
+        f"Charges personnel {selected_year}": st.column_config.TextColumn(
+            f"CP {selected_year}",
+            help="Charges de personnel",
+            width="medium"
+        ),
+        f"Marge EBIT/CA {selected_year}": st.column_config.TextColumn(
+            f"Marge EBIT/CA {selected_year}",
+            help="Marge EBIT sur CA",
+            width="small"
+        ),
+        f"Marge EBIT/CP {selected_year}": st.column_config.TextColumn(
+            f"Marge EBIT/CP {selected_year}",
+            help="Marge EBIT sur CP",
+            width="small"
+        ),
+        f"Marge CP/CA {selected_year}": st.column_config.TextColumn(
+            f"Marge CP/CA {selected_year}",
+            help="Marge CP sur CA",
+            width="small"
+        )
+    }
+)
 
 def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, chart_title=None):
     bar_count = len(multi_sectors)

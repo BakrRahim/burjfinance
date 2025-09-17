@@ -912,12 +912,12 @@ if display_mode == "Entreprise individuelle":
         "Sélectionner une entreprise pour détails",
         ["Aucune"] + sorted(df[COMPANY_COL].dropna().unique())
     )
+    company_sector = get_company_sector(company_single, df, COMPANY_COL, SECTOR_COL)
     if company_single != "Aucune":
         comp_df = df[df[COMPANY_COL] == company_single]
         if comp_df.empty:
             st.write("Entreprise non trouvée.")
         else:
-            company_sector = get_company_sector(company_single, df, COMPANY_COL, SECTOR_COL)
             ca_col = f"Chiffre d'affaires {metric_display_year} (Dhs)"
             re_col = f"Resultat d'exploitation {metric_display_year} (Dhs)"
             cp_col = f"Charges personnel {metric_display_year}"
@@ -968,6 +968,7 @@ if display_mode == "Entreprise individuelle":
                     cp_values.append(comp_df[col].iloc[0] if pd.notna(comp_df[col].iloc[0]) else 0)
                 else:
                     cp_values.append(0)
+            st.markdown(f"<h3 style='color: #28a745;'>Secteur : {company_sector}</h3>", unsafe_allow_html=True)
             ca_values = np.array(ca_values, dtype=float)
             re_values = np.array(re_values, dtype=float)
             n_years = len(YEARS) - 1
@@ -1009,7 +1010,7 @@ if display_mode == "Entreprise individuelle":
             ))
             fig.add_annotation(
                 text=f"CAGR CA: {(cagr_ca*100):.2f}%",
-                xref="paper", yref="paper", x=0.4, y=1.25,
+                xref="paper", yref="paper", x=0.4, y=1.20,
                 showarrow=False,
                 font=dict(size=14, color="blue"),
                 bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
@@ -1017,7 +1018,7 @@ if display_mode == "Entreprise individuelle":
             )
             fig.add_annotation(
                 text=f"CAGR RE: {(cagr_re*100):.2f}%",
-                xref="paper", yref="paper", x=0.55, y=1.25,
+                xref="paper", yref="paper", x=0.55, y=1.20,
                 showarrow=False,
                 font=dict(size=14, color="red"),
                 bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
@@ -1039,7 +1040,7 @@ if display_mode == "Entreprise individuelle":
                 if pd.notna(sector_cagr_ca):
                     fig.add_annotation(
                         text=f"CAGR CA Secteur: {(sector_cagr_ca*100):.2f}%",
-                        xref="paper", yref="paper", x=0.25, y=1.15,
+                        xref="paper", yref="paper", x=0.25, y=1.11,
                         showarrow=False,
                         font=dict(size=14, color="#28a745"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1048,7 +1049,7 @@ if display_mode == "Entreprise individuelle":
                 if pd.notna(sector_cagr_re):
                     fig.add_annotation(
                         text=f"CAGR RE Secteur: {(sector_cagr_re*100):.2f}%",
-                        xref="paper", yref="paper", x=0.70, y=1.15,
+                        xref="paper", yref="paper", x=0.70, y=1.11,
                         showarrow=False,
                         font=dict(size=14, color="#28a745"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1062,7 +1063,7 @@ if display_mode == "Entreprise individuelle":
                 barmode="group",
                 legend=dict(orientation="h", yanchor="bottom", y=-0.25, x=0, font=dict(size=18)),
                 height=600,
-                margin=dict(l=80, r=80, t=200, b=80),
+                margin=dict(l=80, r=80, t=150, b=80),
                 font=dict(size=18),
                 hovermode="x unified",
             )

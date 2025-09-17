@@ -143,20 +143,29 @@ def compact_num(n) -> str:
         n = float(n)
         if n < 0:
             n = 0
-    except Exception:
+    except (ValueError, TypeError):
         return str(n)
+    if abs(n) < 1.0:
+        return f"{n:.6f}"
+    
     B = 1e9
     M = 1e6
-    K = 1e3
+    K = 1e3    
     if abs(n) >= B:
-        return f"{n / B:.2f}B"
+        scaled = n / B
+        return f"{scaled:.2f}B"
     elif abs(n) >= M:
-        return f"{n / M:.1f}M"
+        scaled = n / M
+        return f"{scaled:.1f}M"
     elif abs(n) >= K:
-        return f"{n / K:.1f}K"
+        scaled = n / K
+        return f"{scaled:.1f}K"
     else:
-        return f"{n:,.0f}"
-
+        if n == int(n):
+            return f"{int(n):,}"
+        else:
+            return f"{n:,.2f}"
+        
 def format_range_compact(mi, ma) -> str:
     if pd.isna(mi) and pd.isna(ma):
         return "N/A"
@@ -173,44 +182,120 @@ import numpy as np
 import pandas as pd
 from typing import Tuple, Union
 
-
-def parse_revenue_text(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
+def parse_companies_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
+    s = s.split(".")[0]
     if pd.isna(s):
         return np.nan, np.nan
-
     raw = str(s).strip()
-    if raw == "" or raw.lower() in ['n/a', 'non disponible', 'non communiqué']:
+    if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '']:
         return np.nan, np.nan
-
-    raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
-    raw_lower = raw_clean.lower()
-
-    number_pattern = r'\d+(?:[.,]\d{3})*(?:[.,]\d+)?'
+    
+    raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
+    number_pattern = r'\b(\d{1,3}(?:\.\d{3})+)\b'
     numbers = re.findall(number_pattern, raw_clean)
-
+    if not numbers:
+        fallback_pattern = r'\b(\d+(?:\.\d+)*)\b'
+        numbers = re.findall(fallback_pattern, raw_clean)
+    
+    if not numbers:
+        numbers = re.findall(r'\b(\d+)\b', raw_clean)
+    
     norm_nums = []
     for num in numbers:
-        if ',' in num and '.' in num:
-            num = num.replace('.', '').replace(',', '.')
-        else:
-            num = num.replace('.', '').replace(',', '')
         try:
-            norm_nums.append(int(float(num)))
-        except ValueError:
-            pass
-    if "de" in raw_lower and "à" in raw_lower and len(norm_nums) >= 2:
+            cleaned_num = num.replace('.', '')
+            cleaned_num = cleaned_num.replace(',', '')
+            value = float(cleaned_num)
+            norm_nums.append(int(value))
+        except (ValueError, TypeError, OverflowError):
+            continue
+    
+    if len(norm_nums) == 1:
+        return norm_nums[0], norm_nums[0]
+    elif len(norm_nums) > 1:
         return min(norm_nums), max(norm_nums)
-    if any(word in raw_lower for word in ["inférieur", "inferieur", "moins de"]) and len(norm_nums) >= 1:
+    return np.nan, np.nan
+
+def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float], Union[int, float]]:
+    if pd.isna(s):
+        return np.nan, np.nan
+    
+    raw = str(s).strip()
+    if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '']:
+        return np.nan, np.nan
+    
+    raw_lower = raw.lower()
+    raw_clean = re.sub(r'\s*(dh[s]?|dhs|mad|dh|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
+    number_pattern = r'\b(\d{1,3}(?:,\d{3})*(?:,\d{1,2})?)\b'
+    numbers = re.findall(number_pattern, raw_clean)    
+    norm_nums = []
+    for num in numbers:
+        try:
+            cleaned_num = num.replace(',', '')
+            value = float(cleaned_num)
+            if value == int(value):
+                norm_nums.append(int(value))
+            else:
+                norm_nums.append(value)
+        except (ValueError, TypeError):
+            continue
+    
+    if ("de" in raw_lower and "à" in raw_lower) or "entre" in raw_lower:
+        if len(norm_nums) >= 2:
+            return min(norm_nums), max(norm_nums)    
+        range_pattern = r'de\s+([^à]+?)\s+à\s+(.+?)(?=\s|$|dh)'
+        range_match = re.search(range_pattern, raw_lower, re.IGNORECASE)
+        if range_match:
+            try:
+                min_str = range_match.group(1).strip()
+                max_str = range_match.group(2).strip()
+                min_clean = re.sub(r'[^\d,]', '', min_str).replace(',', '')
+                max_clean = re.sub(r'[^\d,]', '', max_str).replace(',', '')
+                min_val = float(min_clean)
+                max_val = float(max_clean)
+                return int(min_val), int(max_val)
+            except (ValueError, TypeError):
+                pass
+    
+    if any(word in raw_lower for word in ["inférieur", "inferieur", "moins de", "<"]) and len(norm_nums) >= 1:
         return 0, norm_nums[0]
-    if any(word in raw_lower for word in ["supérieur", "superieur", "plus de"]) and len(norm_nums) >= 1:
+    if any(word in raw_lower for word in ["supérieur", "superieur", "plus de", ">"]) and len(norm_nums) >= 1:
         return norm_nums[0], np.nan
-    if "entre" in raw_lower and len(norm_nums) >= 2:
-        return min(norm_nums), max(norm_nums)
     if len(norm_nums) == 1:
         return norm_nums[0], norm_nums[0]
     if len(norm_nums) >= 2:
         return min(norm_nums), max(norm_nums)
+    
     return np.nan, np.nan
+
+def clean_operating_income(value, is_companies: bool = False) -> int:
+    if pd.isna(value):
+        return 0
+    
+    value = int(value) if value else np.nan
+    raw = str(value).strip()
+    if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '']:
+        return 0
+    
+    try:
+        temp_raw = re.sub(r'\s*(dh[s]?|dhs|mad|dh|€|USD|\$)\.?\s*', '', raw, flags=re.IGNORECASE).strip()
+        if is_companies:
+            cleaned = temp_raw.replace('.', '').replace(',', '')
+            cleaned = re.sub(r'[^\d]', '', cleaned)
+            if not cleaned:
+                return 0
+            value = int(cleaned)
+            return value
+        else:
+            cleaned = temp_raw.replace(',', '').replace('.', '')
+            cleaned = re.sub(r'[^\d]', '', cleaned)
+            if not cleaned:
+                return 0
+            value = int(cleaned)
+            return value
+            
+    except (ValueError, TypeError, OverflowError):
+        return 0
 
 def find_numeric_columns(df: pd.DataFrame) -> List[str]:
     numeric_cols = []
@@ -305,52 +390,77 @@ if df_companies is None and df_kerix is None:
 def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFrame, dict]:
     df = df.copy()
     info = {}
+    
     revenue_candidates = [
         "Chiffre d'affaires 2023 (Dhs)", "Chiffre d'affaires 2023 (Dhs) ", "Chiffre d'affaires 2023",
-        "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) "
+        "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) ",
+        "CA", "Chiffre d'affaire"
     ]
     rev_col = get_col(df, revenue_candidates)
     info['revenue_col'] = rev_col
-    if rev_col:
-        df['_revenue_raw'] = df[rev_col]
-    else:
+    
+    if not rev_col:
         for c in df.columns:
-            if 'chiffre' in c.lower():
+            c_lower = str(c).lower()
+            if 'chiffre' in c_lower and 'affair' in c_lower:
                 rev_col = c
-                df['_revenue_raw'] = df[c]
                 info['revenue_col'] = rev_col
                 break
-    if '_revenue_raw' not in df.columns:
+    
+    if rev_col and rev_col in df.columns:
+        df['_revenue_raw'] = df[rev_col]        
+        if is_companies:
+            parse_func = parse_companies_revenue
+        else:
+            parse_func = parse_kerix_revenue
+        
+        mins = []
+        maxs = []
+        for v in df['_revenue_raw'].fillna("").astype(str).tolist():
+            mi, ma = parse_func(v)
+            mins.append(mi)
+            maxs.append(ma)
+        
+        df['_revenue_min'] = pd.Series(mins, dtype='float64')
+        df['_revenue_max'] = pd.Series(maxs, dtype='float64')
+    else:
         df['_revenue_raw'] = np.nan
-    mins = []
-    maxs = []
-    for v in df['_revenue_raw'].fillna("").astype(str).tolist():
-        mi, ma = parse_revenue_text(v)
-        mins.append(mi)
-        maxs.append(ma)
-    df['_revenue_min'] = pd.Series(mins, dtype='float64')
-    df['_revenue_max'] = pd.Series(maxs, dtype='float64')
+        df['_revenue_min'] = np.nan
+        df['_revenue_max'] = np.nan
+    
     operating_candidates = [
         "Resultat d'exploitation 2023 (Dhs)", "Resultat d'exploitation 2023 (Dhs) ", "Resultat d'exploitation 2023",
-        "Resultat d'exploitation", "Resultat d'exploitation", "Resultat d'exploitation 2023 (Dhs)", "Résultat d'exploitation 2023 (Dhs) "
+        "Resultat d'exploitation", "Résultat d'exploitation 2023 (Dhs)", "Résultat d'exploitation",
+        "RE", "Résultat d'Exploitation"
     ]
     op_col = get_col(df, operating_candidates)
-    if op_col:
-        df['_operating_income'] = pd.to_numeric(df[op_col], errors='coerce').fillna(0)
+    
+    if not op_col:
+        for c in df.columns:
+            c_lower = str(c).lower()
+            if 'resultat' in c_lower and 'exploitation' in c_lower:
+                op_col = c
+                break
+    
+    if op_col and op_col in df.columns:
+        df['_operating_income'] = df[op_col].apply(lambda x: clean_operating_income(x, is_companies))
     else:
         df['_operating_income'] = 0.0
+    
     city_candidates = ["Ville RC", "Ville", "City", "Localisation", "Siège social"]
     city_col = get_col(df, city_candidates)
     if city_col:
         df['_city'] = df[city_col].fillna("").astype(str)
     else:
         df['_city'] = ""
+    
     sector_candidates = ["Secteur", "Sector", "Activité principale", "Branche"]
     sector_col = get_col(df, sector_candidates)
     if sector_col:
         df['_sector'] = df[sector_col].fillna("").astype(str)
     else:
         df['_sector'] = ""
+    
     if is_companies:
         name_candidates = ["Raison Sociale (Kerix)", "Raison Sociale (Maroc1000 Nouvelle)", "Raison Sociale (Maroc1000 ancienne)", "Raison Sociale", "Raison Sociale (Maroc1000)"]
         existing = [c for c in name_candidates if c in df.columns]
@@ -372,21 +482,149 @@ def prepare_df(df: pd.DataFrame, is_companies: bool = False) -> Tuple[pd.DataFra
         else:
             txt_cols = [c for c in df.columns if df[c].dtype == object]
             df['_display_name'] = df[txt_cols[0]].fillna("").astype(str) if txt_cols else ""
+    
     products_col = get_col(df, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
     if products_col:
         df['_products'] = df[products_col].fillna("").astype(str)
     else:
         df['_products'] = ""
     info['products_col'] = products_col
+    
     return df, info
 
-df_companies_prepared, info_companies = (prepare_df(df_companies, is_companies=True) if df_companies is not None else (None, {}))
-df_kerix_prepared, info_kerix = (prepare_df(df_kerix, is_companies=False) if df_kerix is not None else (None, {}))
+def get_year_revenue_columns(df, selected_years):
+    if df is None:
+        return None
+    year_cols = {}
+    revenue_base = ["Chiffre d'affaires", "Chiffre d'Affaires"]
+    operating_base = ["Resultat d'exploitation", "Résultat d'exploitation"]
+    for year in selected_years:
+        rev_candidates = [f"{base} {year} (Dhs)" for base in revenue_base] + [f"{base} {year}" for base in revenue_base]
+        op_candidates = [f"{base} {year} (Dhs)" for base in operating_base] + [f"{base} {year}" for base in operating_base]
+        rev_col = get_col(df, rev_candidates)
+        op_col = get_col(df, op_candidates)
+        year_cols[year] = {'revenue': rev_col, 'operating': op_col}
+    return year_cols
 
-if 'groups' not in st.session_state:
-    st.session_state.groups = {}
-if 'group_exclusions' not in st.session_state:
-    st.session_state.group_exclusions = {'companies': set(), 'kerix': set()}
+def prepare_df_with_years(df, selected_years, is_companies=False):
+    if df is None:
+        return None, {}
+    df = df.copy()
+    info = {}
+    
+    year_cols = get_year_revenue_columns(df, selected_years)
+    if not year_cols:
+        return prepare_df(df, is_companies), info
+    
+    primary_year = max(selected_years)
+    primary_rev_col = year_cols[primary_year]['revenue']
+    
+    if primary_rev_col and primary_rev_col in df.columns:
+        df['_revenue_raw'] = df[primary_rev_col]
+        info['revenue_col'] = primary_rev_col
+    else:
+        revenue_candidates = [
+            "Chiffre d'affaires 2023 (Dhs)", "Chiffre d'affaires 2023 (Dhs) ", "Chiffre d'affaires 2023",
+            "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) ",
+            "Chiffre d'Affaires", "CA", "Chiffre d'affaire"
+        ]
+        rev_col = get_col(df, revenue_candidates)
+        info['revenue_col'] = rev_col
+        
+        if not rev_col:
+            for c in df.columns:
+                c_lower = str(c).lower()
+                if 'chiffre' in c_lower and 'affair' in c_lower:
+                    rev_col = c
+                    info['revenue_col'] = rev_col
+                    break
+        
+        if rev_col and rev_col in df.columns:
+            df['_revenue_raw'] = df[rev_col]
+        else:
+            df['_revenue_raw'] = np.nan
+    
+    if '_revenue_raw' not in df.columns:
+        df['_revenue_raw'] = np.nan
+    
+    if is_companies:
+        parse_func = parse_companies_revenue
+    else:
+        parse_func = parse_kerix_revenue
+    
+    mins = []
+    maxs = []
+    for v in df['_revenue_raw'].fillna("").astype(str).tolist():
+        mi, ma = parse_func(v)
+        mins.append(mi)
+        maxs.append(ma)
+    
+    df['_revenue_min'] = pd.Series(mins, dtype='float64')
+    df['_revenue_max'] = pd.Series(maxs, dtype='float64')
+    
+    primary_op_col = year_cols[primary_year]['operating']
+    if primary_op_col and primary_op_col in df.columns:
+        df['_operating_income'] = df[primary_op_col].apply(lambda x: clean_operating_income(x, is_companies))
+        info['operating_col'] = primary_op_col
+    else:
+        operating_candidates = [
+            "Resultat d'exploitation 2023 (Dhs)", "Resultat d'exploitation 2023 (Dhs) ", "Resultat d'exploitation 2023",
+            "Resultat d'exploitation", "Résultat d'exploitation 2023 (Dhs)", "Résultat d'exploitation",
+            "RE", "Résultat d'Exploitation"
+        ]
+        op_col = get_col(df, operating_candidates)
+        if op_col and op_col in df.columns:
+            df['_operating_income'] = df[op_col].apply(lambda x: clean_operating_income(x, is_companies))
+            info['operating_col'] = op_col
+        else:
+            df['_operating_income'] = 0.0
+    
+    city_candidates = ["Ville RC", "Ville", "City", "Localisation", "Siège social"]
+    city_col = get_col(df, city_candidates)
+    if city_col:
+        df['_city'] = df[city_col].fillna("").astype(str)
+    else:
+        df['_city'] = ""
+    
+    sector_candidates = ["Secteur", "Sector", "Activité principale", "Branche"]
+    sector_col = get_col(df, sector_candidates)
+    if sector_col:
+        df['_sector'] = df[sector_col].fillna("").astype(str)
+    else:
+        df['_sector'] = ""
+    
+    if is_companies:
+        name_candidates = ["Raison Sociale (Kerix)", "Raison Sociale (Maroc1000 Nouvelle)", "Raison Sociale (Maroc1000 ancienne)", "Raison Sociale", "Raison Sociale (Maroc1000)"]
+        existing = [c for c in name_candidates if c in df.columns]
+        info['name_candidates'] = existing
+        def fallback_row_name(row):
+            for c in existing:
+                val = row.get(c)
+                if pd.notna(val) and str(val).strip() != "":
+                    return str(val)
+            return ""
+        df['_display_name'] = df.apply(fallback_row_name, axis=1)
+    else:
+        name_candidates_k = ["Raison Sociale", "Raison Sociale "]
+        existing_k = [c for c in name_candidates_k if c in df.columns]
+        info['name_candidates'] = existing_k
+        if existing_k:
+            primary = existing_k[0]
+            df['_display_name'] = df[primary].fillna("").astype(str)
+        else:
+            txt_cols = [c for c in df.columns if df[c].dtype == object]
+            df['_display_name'] = df[txt_cols[0]].fillna("").astype(str) if txt_cols else ""
+    
+    products_col = get_col(df, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
+    if products_col:
+        df['_products'] = df[products_col].fillna("").astype(str)
+    else:
+        df['_products'] = ""
+    info['products_col'] = products_col
+    info['year_cols'] = year_cols
+    info['selected_years'] = selected_years
+    
+    return df, info
 
 def apply_group_exclusions(df, db_name):
     if not st.session_state.groups:
@@ -402,9 +640,6 @@ def apply_group_exclusions(df, db_name):
         df = df[~df['_display_name'].isin(all_grouped_companies)].reset_index(drop=True)
     
     return df
-
-df_companies_prepared = apply_group_exclusions(df_companies_prepared, 'companies') if df_companies_prepared is not None else None
-df_kerix_prepared = apply_group_exclusions(df_kerix_prepared, 'kerix') if df_kerix_prepared is not None else None
 
 def extract_available_years(df_companies, df_kerix):
     all_years = set()
@@ -435,19 +670,8 @@ else:
     selected_years = available_years
     st.sidebar.info(f"Données disponibles pour {selected_years[0]}")
 
-def get_year_revenue_columns(df, selected_years):
-    if df is None:
-        return None
-    year_cols = {}
-    revenue_base = ["Chiffre d'affaires", "Chiffre d'Affaires"]
-    operating_base = ["Resultat d'exploitation", "Résultat d'exploitation"]
-    for year in selected_years:
-        rev_candidates = [f"{base} {year} (Dhs)" for base in revenue_base] + [f"{base} {year}" for base in revenue_base]
-        op_candidates = [f"{base} {year} (Dhs)" for base in operating_base] + [f"{base} {year}" for base in operating_base]
-        rev_col = get_col(df, rev_candidates)
-        op_col = get_col(df, op_candidates)
-        year_cols[year] = {'revenue': rev_col, 'operating': op_col}
-    return year_cols
+df_companies_prepared, info_companies = prepare_df_with_years(df_companies, selected_years, is_companies=True) if df_companies is not None else (None, {})
+df_kerix_prepared, info_kerix = prepare_df_with_years(df_kerix, selected_years, is_companies=False) if df_kerix is not None else (None, {})
 
 def extract_seed_tokens(seed_series):
     prods = ""
@@ -460,111 +684,6 @@ def extract_seed_tokens(seed_series):
     
     deduped_tokens, full_tokens = split_tokens(prods)
     return deduped_tokens, full_tokens
-
-def prepare_df_with_years(df, selected_years, is_companies=False):
-    if df is None:
-        return None, {}
-    df = df.copy()
-    info = {}
-    year_cols = get_year_revenue_columns(df, selected_years)
-    if not year_cols:
-        return prepare_df(df, is_companies), info
-    primary_year = max(selected_years)
-    primary_rev_col = year_cols[primary_year]['revenue']
-    if primary_rev_col:
-        df['_revenue_raw'] = df[primary_rev_col]
-        info['revenue_col'] = primary_rev_col
-    else:
-        revenue_candidates = [
-            "Chiffre d'affaires 2023 (Dhs)", "Chiffre d'affaires 2023 (Dhs) ", "Chiffre d'affaires 2023",
-            "Chiffre d'affaires", "Chiffre d'Affaires", "Chiffre d'Affaires 2023 (Dhs)", "Chiffre d'Affaires 2023 (Dhs) ",
-            "Chiffre d'Affaires"
-        ]
-        rev_col = get_col(df, revenue_candidates)
-        info['revenue_col'] = rev_col
-        if not rev_col:
-            for c in df.columns:
-                c_lower = str(c).lower()
-                if 'chiffre' in c_lower and 'affair' in c_lower:
-                    rev_col = c
-                    info['revenue_col'] = rev_col
-                    break
-        
-        if rev_col:
-            df['_revenue_raw'] = df[rev_col]
-        else:
-            df['_revenue_raw'] = np.nan
-            st.warning(f"Aucune colonne CA trouvée dans {rev_col}")
-    if '_revenue_raw' not in df.columns:
-        df['_revenue_raw'] = np.nan
-    mins = []
-    maxs = []
-    for v in df['_revenue_raw'].fillna("").astype(str).tolist():
-        mi, ma = parse_revenue_text(v)
-        mins.append(mi)
-        maxs.append(ma)
-    df['_revenue_min'] = pd.Series(mins, dtype='float64')
-    df['_revenue_max'] = pd.Series(maxs, dtype='float64')
-    primary_op_col = year_cols[primary_year]['operating']
-    if primary_op_col:
-        df['_operating_income'] = pd.to_numeric(df[primary_op_col], errors='coerce').fillna(0)
-        info['operating_col'] = primary_op_col
-    else:
-        operating_candidates = [
-            "Resultat d'exploitation 2023 (Dhs)", "Resultat d'exploitation 2023 (Dhs) ", "Resultat d'exploitation 2023",
-            "Resultat d'exploitation", "Resultat d'exploitation", "Resultat d'exploitation 2023 (Dhs)", "Résultat d'exploitation 2023 (Dhs) "
-        ]
-        op_col = get_col(df, operating_candidates)
-        if op_col:
-            df['_operating_income'] = pd.to_numeric(df[op_col], errors='coerce').fillna(0)
-            info['operating_col'] = op_col
-        else:
-            df['_operating_income'] = 0.0
-    city_candidates = ["Ville RC", "Ville", "City", "Localisation", "Siège social"]
-    city_col = get_col(df, city_candidates)
-    if city_col:
-        df['_city'] = df[city_col].fillna("").astype(str)
-    else:
-        df['_city'] = ""
-    sector_candidates = ["Secteur", "Sector", "Activité principale", "Branche"]
-    sector_col = get_col(df, sector_candidates)
-    if sector_col:
-        df['_sector'] = df[sector_col].fillna("").astype(str)
-    else:
-        df['_sector'] = ""
-    if is_companies:
-        name_candidates = ["Raison Sociale (Kerix)", "Raison Sociale (Maroc1000 Nouvelle)", "Raison Sociale (Maroc1000 ancienne)", "Raison Sociale", "Raison Sociale (Maroc1000)"]
-        existing = [c for c in name_candidates if c in df.columns]
-        info['name_candidates'] = existing
-        def fallback_row_name(row):
-            for c in existing:
-                val = row.get(c)
-                if pd.notna(val) and str(val).strip() != "":
-                    return str(val)
-            return ""
-        df['_display_name'] = df.apply(fallback_row_name, axis=1)
-    else:
-        name_candidates_k = ["Raison Sociale", "Raison Sociale "]
-        existing_k = [c for c in name_candidates_k if c in df.columns]
-        info['name_candidates'] = existing_k
-        if existing_k:
-            primary = existing_k[0]
-            df['_display_name'] = df[primary].fillna("").astype(str)
-        else:
-            txt_cols = [c for c in df.columns if df[c].dtype == object]
-            df['_display_name'] = df[txt_cols[0]].fillna("").astype(str) if txt_cols else ""
-    products_col = get_col(df, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
-    if products_col:
-        df['_products'] = df[products_col].fillna("").astype(str)
-    else:
-        df['_products'] = ""
-    info['products_col'] = products_col
-    info['year_cols'] = year_cols
-    info['selected_years'] = selected_years
-    return df, info
-
-df_companies_prepared, info_companies = prepare_df_with_years(df_companies, selected_years, is_companies=True) if df_companies is not None else (None, {})
-df_kerix_prepared, info_kerix = prepare_df_with_years(df_kerix, selected_years, is_companies=False) if df_kerix is not None else (None, {})
 
 combined_revs_min = []
 combined_revs_max = []
