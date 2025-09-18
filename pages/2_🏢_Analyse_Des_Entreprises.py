@@ -27,6 +27,23 @@ except Exception:
             return 0.0
         return difflib.SequenceMatcher(None, a, b).ratio()
 
+def get_largest_ca_company_sector(group_companies, df, company_col, sector_col, year=2023):
+    if not group_companies or df.empty or sector_col not in df.columns:
+        return None    
+    max_ca = 0
+    largest_sector = None
+    ca_col = f"Chiffre d'affaires {year} (Dhs)"
+    if ca_col not in df.columns:
+        return None
+    for company in group_companies:
+        comp_df = safe_find_company(df, company, company_col)
+        if not comp_df.empty:
+            ca_value = safe_to_numeric(comp_df.iloc[0][ca_col])
+            if pd.notna(ca_value) and ca_value > max_ca:
+                max_ca = ca_value
+                largest_sector = str(comp_df.iloc[0][sector_col]).strip() if sector_col in comp_df.columns else None
+    return largest_sector
+
 def calculate_cagr(values, n_years=None):
     try:
         valid_values = [v for v in values if pd.notna(v) and isinstance(v, (int, float)) and v > 0]
@@ -47,6 +64,30 @@ def calculate_cagr(values, n_years=None):
         return float(cagr)
     except Exception:
         return np.nan
+
+def all_entities_same_sector(entities, df, company_col, sector_col):
+    if not entities:
+        return False, None
+    
+    sectors = set()
+    for entity in entities:
+        if entity in group_manager.groups:
+            group_companies = group_manager.groups[entity].get('companies', [])
+            for company in group_companies:
+                sector = get_company_sector(company, df, company_col, sector_col)
+                if sector:
+                    sectors.add(sector)
+        else:
+            sector = get_company_sector(entity, df, company_col, sector_col)
+            if sector:
+                sectors.add(sector)
+    
+    if len(sectors) == 1:
+        return True, list(sectors)[0]
+    elif len(sectors) > 1:
+        return False, None
+    else:
+        return False, None
 
 def get_company_sector(company_name, df, company_col, sector_col):
     if company_name and sector_col and sector_col in df.columns:
@@ -137,11 +178,51 @@ def get_sector_financial_values(sector_name, df, metric_key, years):
     return values
 
 def get_sector_cagr(sector_name, metric_key, years):
-    if not sector_cagr_data or sector_name not in sector_cagr_data.get(f"{metric_key}_CAGR", {}):
+    print(metric_key)
+    if not sector_cagr_data:
         return np.nan
     
-    cagr_value = sector_cagr_data[f"{metric_key}_CAGR"].get(sector_name, np.nan)
-    return cagr_value if not pd.isna(cagr_value) else np.nan
+    if metric_key in ["Chiffre d'affaires", "Resultat d'exploitation", "Charges personnel"]:
+        cagr_key = f"{metric_key}_CAGR"
+        if cagr_key in sector_cagr_data and sector_name in sector_cagr_data[cagr_key]:
+            cagr_value = sector_cagr_data[cagr_key][sector_name]
+            return cagr_value if not pd.isna(cagr_value) else np.nan
+        return np.nan
+    
+    elif metric_key in ["Marge EBIT/CA", "Marge EBIT/CP", "Marge CP/CA", "Marge EBIT_CA", "Marge EBIT_CP", "Marge CP_CA"]:
+        cagr_key = f"{metric_key}_CAGR"
+        if cagr_key in sector_cagr_data and sector_name in sector_cagr_data[cagr_key]:
+            cagr_value = sector_cagr_data[cagr_key][sector_name]
+            return cagr_value if not pd.isna(cagr_value) else np.nan
+        return np.nan
+    
+    elif metric_key in ["CA", "RE", "CP"]:
+        metric_mapping = {
+            "CA": "Chiffre d'affaires",
+            "RE": "Resultat d'exploitation", 
+            "CP": "Charges personnel"
+        }
+        full_name = metric_mapping.get(metric_key, metric_key)
+        cagr_key = f"{full_name}_CAGR"
+        if cagr_key in sector_cagr_data and sector_name in sector_cagr_data[cagr_key]:
+            cagr_value = sector_cagr_data[cagr_key][sector_name]
+            return cagr_value if not pd.isna(cagr_value) else np.nan
+        return np.nan
+    
+    elif metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+        margin_mapping = {
+            "EBIT_CA": "Marge EBIT/CA",
+            "EBIT_CP": "Marge EBIT/CP",
+            "CP_CA": "Marge CP/CA"
+        }
+        full_name = margin_mapping.get(metric_key, metric_key)
+        cagr_key = f"{full_name}_CAGR"
+        if cagr_key in sector_cagr_data and sector_name in sector_cagr_data[cagr_key]:
+            cagr_value = sector_cagr_data[cagr_key][sector_name]
+            return cagr_value if not pd.isna(cagr_value) else np.nan
+        return np.nan
+    
+    return np.nan
 
 def precalculate_sector_cagrs(df):
     years = [2020, 2021, 2022, 2023]
@@ -1029,9 +1110,9 @@ if display_mode == "Entreprise individuelle":
                     x=YEARS,
                     y=[v * 100 if pd.notna(v) else np.nan for v in sector_marge_values],
                     mode="lines+text",
-                    name=f"{company_sector} - Marge moyenne",
+                    name=f"{company_sector} - Marge",
                     line=dict(shape='spline', color="#28a745", width=3),
-                    hovertemplate=f"{company_sector}<br>%{{x}}<br>Marge moyenne: %{{y:.1f}}%<extra></extra>",
+                    hovertemplate=f"{company_sector}<br>%{{x}}<br>Marge: %{{y:.1f}}%<extra></extra>",
                     textposition="top center",
                     textfont=dict(size=18),
                     yaxis="y2"
@@ -1290,6 +1371,15 @@ elif display_mode == "Groupe d'entreprises":
                 cagr_ca = calculate_cagr(ca_values, n_years)
                 cagr_re = calculate_cagr(re_values, n_years)
                 marge_values = np.array([aggregate_group_data(companies_in_group, df, "EBIT_CA", y) for y in YEARS])
+                group_reference_sector = get_largest_ca_company_sector(companies_in_group, df, COMPANY_COL, SECTOR_COL)
+                if not group_reference_sector:
+                    group_reference_sector = get_group_sector(companies_in_group, df, COMPANY_COL, SECTOR_COL)
+                sector_ca_values = get_sector_financial_values(group_reference_sector, df, "CA", YEARS) if group_reference_sector else [np.nan] * len(YEARS)
+                sector_re_values = get_sector_financial_values(group_reference_sector, df, "RE", YEARS) if group_reference_sector else [np.nan] * len(YEARS)
+                sector_marge_values = get_sector_margin_values(group_reference_sector, df, "EBIT_CA", YEARS) if group_reference_sector else [np.nan] * len(YEARS)
+                sector_cagr_ca = get_sector_cagr(group_reference_sector, "Chiffre d'affaires", YEARS) if group_reference_sector else np.nan
+                sector_cagr_re = get_sector_cagr(group_reference_sector, "Resultat d'exploitation", YEARS) if group_reference_sector else np.nan
+                sector_cagr_marge = get_sector_cagr(group_reference_sector, "Marge EBIT/CA", YEARS) if group_reference_sector else np.nan
                 fig = go.Figure()
                 fig.add_trace(go.Bar(
                     x=YEARS,
@@ -1299,7 +1389,8 @@ elif display_mode == "Groupe d'entreprises":
                     text=[f"{v/1e9:.2f} B" if v>=1e9 else f"{v/1e6:.2f} M" if v>=1e6 else f"{v:,.0f}" for v in ca_values],
                     textposition="auto",
                     textfont=dict(size=18),
-                    width=0.25
+                    width=0.25,
+                    offsetgroup=1
                 ))
                 fig.add_trace(go.Bar(
                     x=YEARS,
@@ -1309,7 +1400,8 @@ elif display_mode == "Groupe d'entreprises":
                     text=[f"{v/1e9:.2f} B" if v>=1e9 else f"{v/1e6:.2f} M" if v>=1e6 else f"{v:,.0f}" for v in re_values],
                     textposition="auto",
                     textfont=dict(size=18),
-                    width=0.25
+                    width=0.25,
+                    offsetgroup=2
                 ))
                 fig.add_trace(go.Scatter(
                     x=YEARS,
@@ -1322,9 +1414,10 @@ elif display_mode == "Groupe d'entreprises":
                     textfont=dict(size=18),
                     yaxis="y2"
                 ))
+
                 fig.add_annotation(
                     text=f"CAGR CA: {(cagr_ca*100):.2f}%",
-                    xref="paper", yref="paper", x=0.40, y=1.10,
+                    xref="paper", yref="paper", x=0.4, y=1.20,
                     showarrow=False,
                     font=dict(size=14, color="blue"),
                     bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
@@ -1332,12 +1425,47 @@ elif display_mode == "Groupe d'entreprises":
                 )
                 fig.add_annotation(
                     text=f"CAGR RE: {(cagr_re*100):.2f}%",
-                    xref="paper", yref="paper", x=0.55, y=1.10,
+                    xref="paper", yref="paper", x=0.55, y=1.20,
                     showarrow=False,
                     font=dict(size=14, color="red"),
                     bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
                     borderwidth=1, borderpad=4,
                 )
+
+                if group_reference_sector and any(pd.notna(v) for v in sector_marge_values):
+                    fig.add_trace(go.Scatter(
+                        x=YEARS,
+                        y=[v * 100 if pd.notna(v) else np.nan for v in sector_marge_values],
+                        mode="lines+text",
+                        name=f"{group_reference_sector} - Marge",
+                        line=dict(shape='spline', color="#28a745", width=3),
+                        hovertemplate=f"{group_reference_sector}<br>%{{x}}<br>Marge: %{{y:.1f}}%<extra></extra>",
+                        text=[f"{v*100:.2f}%" if pd.notna(v) else "" for v in sector_marge_values],
+                        textposition="top center",
+                        textfont=dict(size=18),
+                        yaxis="y2"
+                    ))
+                    
+                    if pd.notna(sector_cagr_ca):
+                        fig.add_annotation(
+                            text=f"CAGR CA {group_reference_sector}: {(sector_cagr_ca*100):.2f}%",
+                            xref="paper", yref="paper", x=0.25, y=1.11,
+                            showarrow=False,
+                            font=dict(size=14, color="#28a745"),
+                            bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                            borderwidth=1, borderpad=4,
+                        )
+                    if pd.notna(sector_cagr_re):
+                        fig.add_annotation(
+                            text=f"CAGR RE {group_reference_sector}: {(sector_cagr_re*100):.2f}%",
+                            xref="paper", yref="paper", x=0.70, y=1.11,
+                            showarrow=False,
+                            font=dict(size=14, color="#28a745"),
+                            bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                            borderwidth=1, borderpad=4,
+                        )
+                if group_reference_sector:
+                    st.markdown(f"<h3 style='color: #28a745;'>Secteur : {group_reference_sector}</h3>", unsafe_allow_html=True)
                 fig.update_layout(
                     title=dict(text=f"CA & RE avec Marge EBIT/CA - {selected_group}", font=dict(size=22)),
                     xaxis=dict(tickmode="array", tickvals=YEARS, title="Année", showgrid=False, tickfont=dict(size=18)),
@@ -1740,11 +1868,27 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
     if not entities or df is None or df.empty:
         st.warning("No valid entities or data available for comparison")
         return
+    
+    show_sector_reference = False
+    reference_sector = None
+    if hasattr(st.session_state, 'comparison_reference_sector'):
+        show_sector_reference = True
+        reference_sector = st.session_state.comparison_reference_sector
     if color_map is None:
         color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(entities)}
+    
     fig = go.Figure()
     annotations = []
     ann_step = 1 / (len(entities) + 1)
+    sector_ca_vals = []
+    sector_margin_vals = []
+    if show_sector_reference and reference_sector:
+        for y in years:
+            sector_ca = get_sector_financial_values(reference_sector, df, "CA", [y])[0]
+            sector_ca_vals.append(sector_ca if pd.notna(sector_ca) else np.nan)
+            sector_margin = get_sector_margin_values(reference_sector, df, "EBIT_CA", [y])[0]
+            sector_margin_vals.append(sector_margin if pd.notna(sector_margin) else np.nan)
+    
     for i, entity in enumerate(entities):
         if not isinstance(entity, str) or not entity.strip():
             continue
@@ -1752,6 +1896,7 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
         is_group = entity in group_manager.groups
         display_name = f"👥 {entity}" if is_group else f"🏢 {entity}"
         ca_vals, re_vals = [], []
+        
         for y in years:
             if is_group:
                 companies_in_group = group_manager.groups[entity].get("companies", [])                
@@ -1764,13 +1909,11 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                         re_col = get_column_for("RE", y)
                         ca_val_raw = comp_df.iloc[0][ca_col] if ca_col and ca_col in comp_df.columns else None
                         re_val_raw = comp_df.iloc[0][re_col] if re_col and re_col in comp_df.columns else None
-                        
                         if ca_val_raw is not None:
                             ca_numeric = safe_to_numeric(ca_val_raw)
                             if pd.notna(ca_numeric):
                                 ca_val += int(float(ca_numeric))
                                 valid_companies += 1
-                        
                         if re_val_raw is not None:
                             re_numeric = safe_to_numeric(re_val_raw)
                             if pd.notna(re_numeric):
@@ -1792,10 +1935,12 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
                     ca_val = re_val = np.nan
             ca_vals.append(ca_val)
             re_vals.append(re_val)
-        margin_vals = [(re / ca) if pd.notna(re) and pd.notna(ca) and ca != 0 else np.nan
-                    for re, ca in zip(re_vals, ca_vals)]
+        
+        margin_vals = [(re / ca * 100) if pd.notna(re) and pd.notna(ca) and ca != 0 else np.nan
+                      for re, ca in zip(re_vals, ca_vals)]
         base_color = color_map.get(entity, "#636EFA")
         margin_color = adjust_color_brightness(base_color, 0.9)
+        
         fig.add_trace(go.Bar(
             x=years, y=ca_vals,
             name=f"{display_name} - CA",
@@ -1806,20 +1951,21 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
             textfont=dict(size=16),
         ))
         fig.add_trace(go.Scatter(
-            x=years, y=[v * 100 if pd.notna(v) else np.nan for v in margin_vals],
+            x=years, y=[v if pd.notna(v) else np.nan for v in margin_vals],
             mode="lines+text",
             name=f"{display_name} - Marge EBIT/CA",
             line=dict(shape='spline', color=margin_color, width=3),
-            text=[format_number(v, percent=True) for v in margin_vals],
+            text=[f"{v:.2f}%" if pd.notna(v) else "" for v in margin_vals],
             textposition="top center",
             yaxis="y2",
             textfont=dict(size=16, color="darkblue"),
         ))
+        
         cagr_ca = calculate_cagr(ca_vals, len(years) - 1)
         annotations.append(dict(
             text=f"{display_name}<br>CAGR CA: {cagr_ca*100:.2f}%",
             xref="paper", yref="paper",
-            x=0.05 + i * ann_step, y=1.2,
+            x=0.05 + i * ann_step, y = 1.3 if show_sector_reference else 1.15,
             showarrow=False,
             align="left",
             bgcolor="rgba(255,255,255,1)",
@@ -1827,15 +1973,46 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
             borderwidth=1,
             font=dict(size=13)
         ))
+    if show_sector_reference and reference_sector:
+        sector_display_name = f"📊 {reference_sector} - Secteur"
+        sector_color = "#28a745"
+        if any(pd.notna(v) for v in sector_margin_vals):
+            fig.add_trace(go.Scatter(
+                x=years, y=[v * 100 if pd.notna(v) else np.nan for v in sector_margin_vals],
+                mode="lines+text",
+                name=f"{sector_display_name} - Marge EBIT/CA",
+                line=dict(color=sector_color, width=3, shape="spline"),
+                yaxis="y2",
+                hovertemplate=f"{reference_sector}<br>%{{x}}<br>Marge EBIT/CA: %{{y:.1f}}%<extra></extra>",
+                text=[f"{v*100:.2f}%" if pd.notna(v) else "" for v in sector_margin_vals],
+                textposition="top center",
+                textfont=dict(size=15, color=sector_color),
+            ))
+        sector_cagr_ca = get_sector_cagr(reference_sector, "Chiffre d'affaires", years)
+        sector_cagr_margin = get_sector_cagr(reference_sector, "Marge EBIT/CA", years)
+        
+        if pd.notna(sector_cagr_ca):
+            annotations.append(dict(
+                text=f"{sector_display_name}<br>CAGR CA: {sector_cagr_ca*100:.2f}%",
+                xref="paper", yref="paper",
+                x=0.02, y=1.15,
+                showarrow=False,
+                align="left",
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor=sector_color,
+                borderwidth=1,
+                font=dict(size=12, color=sector_color)
+            ))
+    
     fig.update_layout(
         title=f"Comparaison CA et Marge EBIT/CA ({years[0]}-{years[-1]}) - {len(entities)} entités",
         xaxis=dict(title="Année", tickmode="array", tickvals=years, showgrid=False),
         yaxis=dict(title="Montants (MAD)", showgrid=False, visible=False),
         yaxis2=dict(title="Marge EBIT/CA (%)", overlaying="y", side="right", showgrid=False, visible=False),
         barmode="group",
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, x=0.5, xanchor="center"),
-        margin=dict(l=60, r=60, t=150, b=80),
-        height=600 if len(entities) > 3 else 550,
+        legend=dict(orientation="h", yanchor="bottom", y=-0.3 if show_sector_reference else -0.25, x=0.5, xanchor="center"),
+        margin=dict(l=60, r=60, t=220 if show_sector_reference else 120, b=80),
+        height=650 if show_sector_reference else (600 if len(entities) > 3 else 550),
         font=dict(size=12),
         hovermode="x unified",
         annotations=annotations,
@@ -1847,24 +2024,53 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
 def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None):
     if not entities or df is None or df.empty:
         return
+    
+    show_sector_reference = False
+    reference_sector = None
+    if hasattr(st.session_state, 'comparison_reference_sector'):
+        show_sector_reference = True
+        reference_sector = st.session_state.comparison_reference_sector
+    
     if color_map is None:
         color_map = {entity: brand_colors[i % len(brand_colors)] for i, entity in enumerate(entities)}
+    
     fig = go.Figure()
     n_entities = len([e for e in entities if isinstance(e, str) and e.strip()])
     if n_entities == 0:
         return
+    
     bar_width = 0.5 / max(n_entities, 1)
     if metric_key not in METRIC_TOKENS:
         st.warning(f"Invalid metric_key '{metric_key}'. Available: {list(METRIC_TOKENS.keys())}")
         return
+    
     annotations = []
     n_years = len(YEARS) - 1
+    
+    sector_values = []
+    sector_cagr = np.nan
+    if show_sector_reference and reference_sector:
+        if metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+            sector_values = get_sector_margin_values(reference_sector, df, metric_key, years)
+            sector_cagr_key = f"Marge {metric_key}"
+        else:
+            sector_values = get_sector_financial_values(reference_sector, df, metric_key, years)
+            sector_cagr_key = {
+                "CA": "Chiffre d'affaires",
+                "RE": "Resultat d'exploitation", 
+                "CP": "Charges personnel"
+            }.get(metric_key, metric_key)
+        
+        if sector_cagr_key:
+            sector_cagr = get_sector_cagr(reference_sector, sector_cagr_key, years)
+    
     for i, entity in enumerate(entities):
         if not isinstance(entity, str) or not entity.strip():
             continue
         entity = entity.strip()
         is_group = entity in group_manager.groups
         values = []
+        
         for y in years:
             if is_group:
                 value = group_manager.get_group_data(entity, df, metric_key, y)
@@ -1879,12 +2085,17 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                 else:
                     value = np.nan
             values.append(value)
+        
         display_name = f"👥 {entity}" if is_group else f"🏢 {entity}"
         x_offset = np.array(years) + (i - n_entities / 2 + 0.5) * bar_width
+        
         if metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
             texts = [format_number(v, percent=True) if pd.notna(v) else "" for v in values]
+            y_values_for_var = values
         else:
             texts = [format_number(v) for v in values]
+            y_values_for_var = values
+        
         if entity in color_map:
             fig.add_trace(go.Bar(
                 x=x_offset,
@@ -1896,13 +2107,14 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                 textposition="auto",
                 textfont=dict(size=16),
             ))
+            
             if len(values) > 1:
                 valid_values = [v for v in values if pd.notna(v)]
-                if len(valid_values) > 1 and metric_key not in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
+                if len(valid_values) > 1:
                     pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
                     fig.add_trace(go.Scatter(
                         x=x_offset,
-                        y=values,
+                        y=y_values_for_var,
                         mode="lines+text",
                         name=f"{display_name} - Var",
                         line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
@@ -1910,23 +2122,12 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                         textposition="top center",
                         textfont=dict(size=16),
                     ))
-                if len(valid_values) > 1 and metric_key in ["EBIT_CA", "EBIT_CP", "CP_CA"]:
-                    pct_change = np.array([np.nan] + list(np.array(valid_values)[1:] / np.array(valid_values)[:-1] - 1))
-                    fig.add_trace(go.Scatter(
-                        x=x_offset,
-                        y=values,
-                        mode="lines+text",
-                        name=f"{display_name} - Var",
-                        line=dict(shape='spline', dash="dot", color=adjust_color_brightness(color_map[entity], 0.8)),
-                        text=["" if pd.isna(v) else f"{v*100:.1f}%" for v in pct_change],
-                        textposition="top center",
-                        textfont=dict(size=16),
-                    ))
+            
             cagr_val = calculate_cagr(values, n_years)
             annotations.append(dict(
                 text=f"{display_name}<br>CAGR: {cagr_val*100:.2f}%",
                 xref="paper", yref="paper",
-                x=0.05 + i * (1/(n_entities+1)), y=1.12,
+                x=0.05 + i * (1/(n_entities+1)), y=1.32 if reference_sector else 1.02,
                 showarrow=False,
                 align="left",
                 bgcolor="rgba(255,255,255,0.9)",
@@ -1934,6 +2135,23 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
                 borderwidth=1,
                 font=dict(size=12, color=color_map[entity])
             ))
+
+    if show_sector_reference and reference_sector and any(pd.notna(v) for v in sector_values):
+        sector_display_name = f"{reference_sector}"
+        sector_color = "#28a745"
+
+        annotations.append(dict(
+            text=f"{sector_display_name}<br>CAGR: {sector_cagr*100:.2f}%",
+            xref="paper", yref="paper",
+            x=0.02, y=1.18 if reference_sector else 1.02,
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=sector_color,
+            borderwidth=1,
+            font=dict(size=12, color=sector_color)
+        ))
+    
     metric_display_name = {
         "CA": "Chiffre d'affaires",
         "RE": "Résultat d'exploitation",
@@ -1948,23 +2166,45 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
         tickformat = ".1%"
     else:
         tickformat = "~s"
-    n_years = len(YEARS) - 1
+    
+    legend_y = -0.3 if show_sector_reference else -0.25
+    height_adjust = 50 if show_sector_reference else 0
+    
     fig.update_layout(
         title=f"{yaxis_title} - Comparaison {len(entities)} entités",
         barmode="group",
         bargap=0.15,
         bargroupgap=0.05,
-        height=550,
+        height=550 + height_adjust,
+        margin=dict(l=80, r=80, t=200 if reference_sector else 120, b=80),
         xaxis=dict(tickmode="array", tickvals=years, title="Année", showgrid=False),
         yaxis=dict(title=yaxis_title, tickformat=tickformat, showgrid=False, visible=False, showticklabels=False),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+        yaxis2=dict(title="Marge EBIT/CA (%)", overlaying="y", side="right", showgrid=False, visible=False),
+        legend=dict(orientation="h", yanchor="bottom", y=legend_y, xanchor="center", x=0.5),
         hovermode="x unified",
         annotations=annotations,
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)'
     )
     st.plotly_chart(fig, use_container_width=True)
+
 if comparison_entities:
+    same_sector, reference_sector = all_entities_same_sector(
+        comparison_entities, df, COMPANY_COL, SECTOR_COL
+    )
+    if same_sector and reference_sector:
+        st.markdown(f"<h3 style='color: #28a745;'>Secteur : {reference_sector}</h3>", unsafe_allow_html=True)
+        st.session_state.comparison_reference_sector = reference_sector
+    else:
+        st.markdown("""
+        <div style='background-color: #fff3cd; padding: 1rem; border-radius: 8px; border-left: 4px solid #ffc107;'>
+            <strong>⚠️ Les entités sélectionnées ont des secteurs différents.</strong><br>
+            <em>Les deux boites ont un secteur different, le benchmark secteur ne sera donc pas affiché par souci de clarté.</em>
+        </div>
+        """, unsafe_allow_html=True)
+        if hasattr(st.session_state, 'comparison_reference_sector'):
+            del st.session_state.comparison_reference_sector
+    
     col1, col2, col3 = st.columns([1, 8, 1])
     if 'comparison_suggestions' in st.session_state and primary_entity_name:
         suggestion_scores = []
