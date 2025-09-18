@@ -169,7 +169,7 @@ def compact_num(n) -> str:
 def format_range_compact(mi, ma) -> str:
     if pd.isna(mi) and pd.isna(ma):
         return "N/A"
-    if pd.isna(mi) and not pd.isna(ma):
+    if (pd.isna(mi) or mi == 0.0) and not pd.isna(ma):
         return f"≤ {compact_num(ma)}"
     if pd.isna(ma) and not pd.isna(mi):
         return f"≥ {compact_num(mi)}"
@@ -219,13 +219,12 @@ def parse_companies_revenue(s: Union[str, int, float]) -> Tuple[Union[int, float
 def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[int, int]:
     if pd.isna(s):
         return np.nan, np.nan
-    
     raw = str(s).strip()
     if not raw or raw.lower() in ['n/a', 'non disponible', 'non communiqué', 'nc', '', 'non défini', 'non communiqué']:
         return np.nan, np.nan
     raw_lower = raw.lower().strip()
     cleaned = re.sub(r'\s*(dh[s]?|mad|€|USD|\$)\.?\s*$', '', raw, flags=re.IGNORECASE).strip()
-    comma_pattern = r'(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)'
+    comma_pattern = r'(\d{1,4}(?:,\d{3})*(?:\.\d{1,2})?)'
     comma_numbers = re.findall(comma_pattern, cleaned)
     simple_pattern = r'(\d+(?:\.\d+)?)'
     simple_numbers = re.findall(simple_pattern, cleaned)
@@ -247,7 +246,8 @@ def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[int, int]:
     #     except (ValueError, TypeError):
     #         continue
     valid_numbers = sorted([n for n in parsed_numbers if n > 0 and not pd.isna(n)])
-    print(valid_numbers)
+    if len(valid_numbers) == 2 and valid_numbers[-1] == 1000000000:
+        print(valid_numbers[0])
     if ("de" in raw_lower and "à" in raw_lower) or "entre" in raw_lower:
         if len(valid_numbers) >= 2:
             return valid_numbers[0], valid_numbers[1]

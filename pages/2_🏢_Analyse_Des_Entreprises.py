@@ -189,7 +189,7 @@ def get_sector_cagr(sector_name, metric_key, years):
             return cagr_value if not pd.isna(cagr_value) else np.nan
         return np.nan
     
-    elif metric_key in ["Marge EBIT/CA", "Marge EBIT/CP", "Marge CP/CA", "Marge EBIT_CA", "Marge EBIT_CP", "Marge CP_CA"]:
+    elif metric_key in ["Marge EBIT/CA", "Marge EBIT/CP", "Marge CP/CA"]:
         cagr_key = f"{metric_key}_CAGR"
         if cagr_key in sector_cagr_data and sector_name in sector_cagr_data[cagr_key]:
             cagr_value = sector_cagr_data[cagr_key][sector_name]
@@ -1448,8 +1448,8 @@ elif display_mode == "Groupe d'entreprises":
                     
                     if pd.notna(sector_cagr_ca):
                         fig.add_annotation(
-                            text=f"CAGR CA {group_reference_sector}: {(sector_cagr_ca*100):.2f}%",
-                            xref="paper", yref="paper", x=0.25, y=1.11,
+                            text=f"CAGR CA : {(sector_cagr_ca*100):.2f}%",
+                            xref="paper", yref="paper", x=0.40, y=1.11,
                             showarrow=False,
                             font=dict(size=14, color="#28a745"),
                             bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1457,8 +1457,8 @@ elif display_mode == "Groupe d'entreprises":
                         )
                     if pd.notna(sector_cagr_re):
                         fig.add_annotation(
-                            text=f"CAGR RE {group_reference_sector}: {(sector_cagr_re*100):.2f}%",
-                            xref="paper", yref="paper", x=0.70, y=1.11,
+                            text=f"CAGR RE : {(sector_cagr_re*100):.2f}%",
+                            xref="paper", yref="paper", x=0.55, y=1.11,
                             showarrow=False,
                             font=dict(size=14, color="#28a745"),
                             bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1472,6 +1472,7 @@ elif display_mode == "Groupe d'entreprises":
                     yaxis=dict(title="Valeurs (Dhs)", showgrid=False, tickfont=dict(size=18), visible=False),
                     yaxis2=dict(title="Marge EBIT/CA (%)", overlaying="y", side="right", showgrid=False, tickfont=dict(size=18), visible=False),
                     barmode="group",
+                    margin=dict(l=80, r=80, t=180 if group_reference_sector else 150, b=80),
                     legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5, font=dict(size=18)),
                     height=600,
                     font=dict(size=18),
@@ -1974,7 +1975,7 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
             font=dict(size=13)
         ))
     if show_sector_reference and reference_sector:
-        sector_display_name = f"{reference_sector} - Secteur"
+        sector_display_name = f"📊 {reference_sector} - Secteur"
         sector_color = "#28a745"
         if any(pd.notna(v) for v in sector_margin_vals):
             fig.add_trace(go.Scatter(
