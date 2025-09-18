@@ -1974,7 +1974,7 @@ def plot_enhanced_comparison(df, years, entities, color_map=None):
             font=dict(size=13)
         ))
     if show_sector_reference and reference_sector:
-        sector_display_name = f"📊 {reference_sector} - Secteur"
+        sector_display_name = f"{reference_sector} - Secteur"
         sector_color = "#28a745"
         if any(pd.notna(v) for v in sector_margin_vals):
             fig.add_trace(go.Scatter(
