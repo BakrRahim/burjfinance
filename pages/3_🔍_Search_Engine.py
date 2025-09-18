@@ -246,8 +246,6 @@ def parse_kerix_revenue(s: Union[str, int, float]) -> Tuple[int, int]:
     #     except (ValueError, TypeError):
     #         continue
     valid_numbers = sorted([n for n in parsed_numbers if n > 0 and not pd.isna(n)])
-    if len(valid_numbers) == 2 and valid_numbers[-1] == 1000000000:
-        print(valid_numbers[0])
     if ("de" in raw_lower and "à" in raw_lower) or "entre" in raw_lower:
         if len(valid_numbers) >= 2:
             return valid_numbers[0], valid_numbers[1]
