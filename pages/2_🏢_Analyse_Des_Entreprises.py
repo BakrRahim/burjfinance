@@ -227,7 +227,6 @@ def get_sector_cagr(sector_name, metric_key, years):
             cagr_value = sector_cagr_data[cagr_key][sector_name]
             return cagr_value if not pd.isna(cagr_value) else np.nan
         return np.nan
-    
     return np.nan
 
 def precalculate_sector_cagrs(df):
@@ -352,25 +351,30 @@ def get_company_products(df, company_name, company_col):
         return split_tokens(products_text)
     return []
 
-def find_closest_companies(df, seed_company, company_col, products_col, threshold=0.6, top_n=2):
+def find_closest_companies(df, seed_company, company_col, products_col, threshold=0.6, top_n=2, same_sector_filter=False, reference_sector=None):
     if seed_company not in df[company_col].values:
         return []
-    
     seed_row = df[df[company_col] == seed_company].iloc[0]
     seed_products = split_tokens(str(seed_row[products_col])) if products_col and products_col in seed_row.index else []
-    
     if not seed_products:
         return []
-
+    
+    if same_sector_filter and reference_sector is None:
+        reference_sector = get_company_sector(seed_company, df, company_col, SECTOR_COL)
+    
     similarities = []
     for _, row in df.iterrows():
         if row[company_col] == seed_company:
             continue
         
+        if same_sector_filter:
+            candidate_sector = get_company_sector(row[company_col], df, company_col, SECTOR_COL)
+            if reference_sector and candidate_sector != reference_sector:
+                continue
+        
         candidate_products = split_tokens(str(row[products_col])) if products_col and products_col in row.index else []
         matched, total = count_similar(seed_products, candidate_products, threshold)
         similarity_score = matched / max(1, total) if total > 0 else 0.0
-        
         similarities.append({
             'company': row[company_col],
             'similarity_score': similarity_score,
@@ -382,9 +386,14 @@ def find_closest_companies(df, seed_company, company_col, products_col, threshol
     similarities.sort(key=lambda x: x['similarity_score'], reverse=True)
     return similarities[:top_n]
 
-def find_closest_companies_to_group(df, group_companies, company_col, products_col, threshold=0.6, top_n=2):
+def find_closest_companies_to_group(df, group_companies, company_col, products_col, threshold=0.6, top_n=2, same_sector_filter=False, reference_sector=None):
     if not group_companies:
         return []
+    
+    if same_sector_filter and reference_sector is None:
+        reference_sector = get_largest_ca_company_sector(group_companies, df, company_col, SECTOR_COL)
+        if not reference_sector:
+            reference_sector = get_group_sector(group_companies, df, company_col, SECTOR_COL)
     
     group_products = []
     for company in group_companies:
@@ -393,22 +402,24 @@ def find_closest_companies_to_group(df, group_companies, company_col, products_c
             company_prods = split_tokens(str(company_row[products_col])) if products_col and products_col in company_row.index else []
             group_products.extend(company_prods)
     group_products = list(set(group_products))
-    
     if not group_products:
         return []
     
     similarities = []
     group_set = set(group_companies)
-    
     for _, row in df.iterrows():
         candidate_company = row[company_col]
         if candidate_company in group_set:
             continue
         
+        if same_sector_filter:
+            candidate_sector = get_company_sector(candidate_company, df, company_col, SECTOR_COL)
+            if reference_sector and candidate_sector != reference_sector:
+                continue
+        
         candidate_products = split_tokens(str(row[products_col])) if products_col and products_col in row.index else []
         matched, total = count_similar(group_products, candidate_products, threshold)
         similarity_score = matched / max(1, total) if total > 0 else 0.0
-        
         similarities.append({
             'company': candidate_company,
             'similarity_score': similarity_score,
@@ -1654,6 +1665,7 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
             )
             if primary_entity != "Aucune":
                 primary_entity_name = primary_entity
+            same_sector_filter = st.checkbox("Suggérer que les entreprises du même secteur", value=False)
         else:
             st.info("Aucune entreprise disponible pour sélection.")
     else:
@@ -1667,6 +1679,7 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
             if primary_group != "Aucun":
                 primary_entity_name = primary_group
                 primary_is_group = True
+            same_sector_filter = st.checkbox("Suggérer que les entreprises du même secteur", value=False)
         else:
             st.info("Aucun groupe disponible.")
 
@@ -1699,16 +1712,30 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
     suggestion_threshold = 0.75
     if primary_entity_name and products_col:
         with st.container():
+            reference_sector = None
+            if same_sector_filter:
+                if not primary_is_group:
+                    reference_sector = get_company_sector(primary_entity_name, df, COMPANY_COL, SECTOR_COL)
+                else:
+                    group_companies = group_manager.groups[primary_entity_name].get('companies', [])
+                    reference_sector = get_largest_ca_company_sector(group_companies, df, COMPANY_COL, SECTOR_COL)
+                    if not reference_sector:
+                        reference_sector = get_group_sector(group_companies, df, COMPANY_COL, SECTOR_COL)
+            
             if not primary_is_group:
                 suggested_companies = find_closest_companies(
                     df, primary_entity_name, COMPANY_COL, products_col,
-                    threshold=suggestion_threshold, top_n=5
+                    threshold=suggestion_threshold, top_n=5,
+                    same_sector_filter=same_sector_filter,
+                    reference_sector=reference_sector
                 )
             else:
                 group_companies = group_manager.groups[primary_entity_name].get('companies', [])
                 suggested_companies = find_closest_companies_to_group(
                     df, group_companies, COMPANY_COL, products_col,
-                    threshold=suggestion_threshold, top_n=5
+                    threshold=suggestion_threshold, top_n=5,
+                    same_sector_filter=same_sector_filter,
+                    reference_sector=reference_sector
                 )
             
             if suggested_companies:
@@ -1728,12 +1755,17 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
                 else:
                     st.warning("⚠️ Colonne CA 2023 non trouvée. Toutes les suggestions sont affichées.")
             
+            if same_sector_filter and reference_sector:
+                st.info(f"🔍 Suggestions filtrées pour le secteur: **{reference_sector}**")
+            
             if suggested_companies:
                 for i, suggestion in enumerate(suggested_companies, 1):
                     with st.container():
                         col_s1, col_s2, col_s3 = st.columns([3, 1, 2])
                         with col_s1:
-                            st.markdown(f"**🏢 {suggestion['company']}**")
+                            suggestion_sector = get_company_sector(suggestion['company'], df, COMPANY_COL, SECTOR_COL)
+                            sector_display = f" ({suggestion_sector})" if suggestion_sector else ""
+                            st.markdown(f"**🏢 {suggestion['company']}**{sector_display}")
                         with col_s2:
                             score_class = "similarity-score"
                             st.markdown(f"""
@@ -1749,15 +1781,25 @@ with st.expander("ii. Suggestions automatiques", expanded=False):
                                 st.rerun()
                 st.info("N.B : Les suggestions apparaitront automatiquement sur les graphes.")
             else:
-                st.info("❌ Aucune entreprise similaire trouvée avec le seuil actuel.")
-                if st.button("🔧 Baisser le seuil de similarité (0.3)"):
-                    suggested_companies = find_closest_companies(
-                        df, primary_entity_name, COMPANY_COL, products_col,
-                        threshold=0.3, top_n=5
-                    ) if not primary_is_group else find_closest_companies_to_group(
-                        df, group_manager.groups[primary_entity_name]['companies'],
-                        COMPANY_COL, products_col, threshold=0.3, top_n=5
-                    )
+                filter_info = " (même secteur)" if same_sector_filter else ""
+                st.info(f"❌ Aucune entreprise similaire trouvée avec le seuil actuel{filter_info}.")
+                
+                if st.button(f"🔧 Baisser le seuil de similarité (0.3){' (même secteur)' if same_sector_filter else ''}"):
+                    if not primary_is_group:
+                        suggested_companies = find_closest_companies(
+                            df, primary_entity_name, COMPANY_COL, products_col,
+                            threshold=0.3, top_n=5,
+                            same_sector_filter=same_sector_filter,
+                            reference_sector=reference_sector
+                        )
+                    else:
+                        group_companies = group_manager.groups[primary_entity_name]['companies']
+                        suggested_companies = find_closest_companies_to_group(
+                            df, group_companies, COMPANY_COL, products_col,
+                            threshold=0.3, top_n=5,
+                            same_sector_filter=same_sector_filter,
+                            reference_sector=reference_sector
+                        )
                     
                     if suggested_companies:
                         ca_2023_col = get_column_for("CA", 2023)
@@ -2105,7 +2147,7 @@ def plot_enhanced_multi_metrics(df, years, entities, metric_key, color_map=None)
         
         if sector_cagr_key:
             sector_cagr = get_sector_cagr(reference_sector, sector_cagr_key, years)
-    
+            
     for i, entity in enumerate(entities):
         if not isinstance(entity, str) or not entity.strip():
             continue
@@ -2252,16 +2294,30 @@ if comparison_entities:
         suggestion_scores = []
         products_col = extract_products_column(df)
         if products_col and primary_entity_name:
+            reference_sector = None
+            if same_sector_filter:
+                if not primary_is_group:
+                    reference_sector = get_company_sector(primary_entity_name, df, COMPANY_COL, SECTOR_COL)
+                else:
+                    group_companies = group_manager.groups[primary_entity_name].get('companies', [])
+                    reference_sector = get_largest_ca_company_sector(group_companies, df, COMPANY_COL, SECTOR_COL)
+                    if not reference_sector:
+                        reference_sector = get_group_sector(group_companies, df, COMPANY_COL, SECTOR_COL)
+            
             if not primary_is_group:
                 all_similarities = find_closest_companies(
                     df, primary_entity_name, COMPANY_COL, products_col,
-                    threshold=0.1, top_n=10
+                    threshold=0.1, top_n=10,
+                    same_sector_filter=same_sector_filter,
+                    reference_sector=reference_sector
                 )
             else:
                 group_companies = group_manager.groups[primary_entity_name].get('companies', [])
                 all_similarities = find_closest_companies_to_group(
                     df, group_companies, COMPANY_COL, products_col,
-                    threshold=0.1, top_n=10
+                    threshold=0.1, top_n=10,
+                    same_sector_filter=same_sector_filter,
+                    reference_sector=reference_sector
                 )
             
             if all_similarities:
@@ -2285,11 +2341,13 @@ if comparison_entities:
                         'matched': sim['matched_count'],
                         'total': sim['total_count']
                     })
+            
             if suggestion_scores:
                 scores_df = pd.DataFrame(suggestion_scores)
                 scores_df['Score'] = scores_df['score'].apply(lambda x: f"{x:.1%}")
                 scores_df['Match'] = scores_df.apply(lambda row: f"{row['matched']}/{row['total']}", axis=1)
                 st.dataframe(scores_df[['company', 'Score', 'Match']].rename(columns={'company': 'Entreprise'}), use_container_width=True)
+
     if df is not None and not df.empty and comparison_entities:
         plot_enhanced_comparison(df, YEARS, comparison_entities)
     if len(comparison_entities) <= 6:
