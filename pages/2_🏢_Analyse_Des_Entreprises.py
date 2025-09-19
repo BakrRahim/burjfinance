@@ -178,7 +178,6 @@ def get_sector_financial_values(sector_name, df, metric_key, years):
     return values
 
 def get_sector_cagr(sector_name, metric_key, years):
-    print(metric_key)
     if not sector_cagr_data:
         return np.nan
     
@@ -1121,7 +1120,7 @@ if display_mode == "Entreprise individuelle":
                 if pd.notna(sector_cagr_ca):
                     fig.add_annotation(
                         text=f"CAGR CA Secteur: {(sector_cagr_ca*100):.2f}%",
-                        xref="paper", yref="paper", x=0.25, y=1.11,
+                        xref="paper", yref="paper", x=0.38, y=1.11,
                         showarrow=False,
                         font=dict(size=14, color="#28a745"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1130,7 +1129,7 @@ if display_mode == "Entreprise individuelle":
                 if pd.notna(sector_cagr_re):
                     fig.add_annotation(
                         text=f"CAGR RE Secteur: {(sector_cagr_re*100):.2f}%",
-                        xref="paper", yref="paper", x=0.70, y=1.11,
+                        xref="paper", yref="paper", x=0.57, y=1.11,
                         showarrow=False,
                         font=dict(size=14, color="#28a745"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1218,7 +1217,7 @@ if display_mode == "Entreprise individuelle":
                     ))
                 fig.add_annotation(
                     text=f"CAGR: {(calculate_cagr(values, n_years)*100):.2f}%",
-                    xref="paper", yref="paper", x=0.3, y=1.12,
+                    xref="paper", yref="paper", x=0.4, y=1.12,
                     showarrow=False,
                     font=dict(size=16, color="black"),
                     bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
@@ -1253,8 +1252,8 @@ if display_mode == "Entreprise individuelle":
                         sector_cagr = get_sector_cagr(company_sector, sector_cagr_key, YEARS[:len(values)])
                 if company_sector and sector_cagr_key and pd.notna(sector_cagr):
                     fig.add_annotation(
-                        text=f"CAGR {company_sector}: {(sector_cagr*100):.2f}%",
-                        xref="paper", yref="paper", x=0.75, y=1.12,
+                        text=f"CAGR Secteur: {(sector_cagr*100):.2f}%",
+                        xref="paper", yref="paper", x=0.55, y=1.12,
                         showarrow=False,
                         font=dict(size=14, color="#28a745"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
@@ -1539,6 +1538,41 @@ elif display_mode == "Groupe d'entreprises":
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
                         borderwidth=1, borderpad=4,
                     )
+                    is_margin = "Marge" in title
+                    if group_reference_sector:
+                        if is_margin and "EBIT/CA" in title:
+                            sector_values = get_sector_margin_values(group_reference_sector, df, "EBIT_CA", YEARS[:len(values)])
+                            sector_cagr_key = "Marge EBIT/CA"
+                        elif is_margin and "EBIT/CP" in title:
+                            sector_values = get_sector_margin_values(group_reference_sector, df, "EBIT_CP", YEARS[:len(values)])
+                            sector_cagr_key = "Marge EBIT/CP"
+                        elif is_margin and "CP/CA" in title:
+                            sector_values = get_sector_margin_values(group_reference_sector, df, "CP_CA", YEARS[:len(values)])
+                            sector_cagr_key = "Marge CP/CA"
+                        elif title == "Chiffre d'affaires":
+                            sector_values = get_sector_financial_values(group_reference_sector, df, "CA", YEARS[:len(values)])
+                            sector_cagr_key = "Chiffre d'affaires"
+                        elif title == "Résultat d'exploitation":
+                            sector_values = get_sector_financial_values(group_reference_sector, df, "RE", YEARS[:len(values)])
+                            sector_cagr_key = "Resultat d'exploitation"
+                        elif title == "Charges personnel":
+                            sector_values = get_sector_financial_values(group_reference_sector, df, "CP", YEARS[:len(values)])
+                            sector_cagr_key = "Charges personnel"
+                        else:
+                            sector_values = [np.nan] * len(values)
+                            sector_cagr_key = None
+                        
+                        if sector_cagr_key:
+                            sector_cagr = get_sector_cagr(group_reference_sector, sector_cagr_key, YEARS[:len(values)])
+                    if group_reference_sector and sector_cagr_key and pd.notna(sector_cagr):
+                        fig.add_annotation(
+                            text=f"CAGR Secteur : {(sector_cagr*100):.2f}%",
+                            xref="paper", yref="paper", x=0.75, y=1.12,
+                            showarrow=False,
+                            font=dict(size=14, color="#28a745"),
+                            bgcolor="rgba(255,255,255,0.8)", bordercolor="#28a745",
+                            borderwidth=1, borderpad=4,
+                        )
                     fig.update_layout(
                         title=dict(text=f"{title} - {selected_group}", font=dict(size=18)),
                         barmode="group",

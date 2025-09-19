@@ -1346,6 +1346,7 @@ def compute_matches_for_df(df, label):
     
     return candidates, display_cols
 
+out = None
 with tabs[0]:
     st.markdown("### Onglet: Base totale")
     if df_companies_prepared is None:
@@ -1362,7 +1363,7 @@ with tabs[0]:
         })
         candidates, display_cols = compute_matches_for_df(df_companies_prepared, "Base totale")
         if candidates is None or candidates.shape[0] == 0:
-            st.info("Aucun candidat trouvé dans la Base totale pour les filtres sélectionnés.")
+            st.info("Aucun candidat trouvé dans la Base totale pour les options sélectionnés.")
         else:
             st.markdown(f"##### Top {int(top_n_preview)} candidats - Base totale")
             rename_map = {
@@ -1383,8 +1384,9 @@ with tabs[0]:
             st.download_button("📥 Télécharger résultats (Base totale)", data=out, file_name="base_totale_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tabs[1]:
-    with pd.ExcelWriter(out, engine="openpyxl") as writer:
-        candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
+    if out is not None and candidates is not None and candidates.shape[0] > 0:
+        with pd.ExcelWriter(out, engine="openpyxl") as writer:
+            candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
     st.markdown("### Onglet: Kerix")
     if df_kerix_prepared is None:
         st.warning("Fichier kerix.xlsx non chargé.")
@@ -1400,7 +1402,7 @@ with tabs[1]:
         })
         candidates_k, display_cols_k = compute_matches_for_df(df_kerix_prepared, "Kerix")
         if candidates_k is None or candidates_k.shape[0] == 0:
-            st.info("Aucun candidat trouvé dans Kerix pour les filtres sélectionnés.")
+            st.info("Aucun candidat trouvé dans Kerix pour les options sélectionnés.")
         else:
             st.markdown(f"##### Top {int(top_n_preview)} candidats - Kerix")
             rename_map = {
