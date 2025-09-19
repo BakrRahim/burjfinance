@@ -69,26 +69,33 @@ def all_entities_same_sector(entities, df, company_col, sector_col):
     if not entities:
         return False, None
     
-    sectors = set()
+    entity_sectors = {}
     for entity in entities:
         if entity in group_manager.groups:
             group_companies = group_manager.groups[entity].get('companies', [])
-            for company in group_companies:
-                sector = get_company_sector(company, df, company_col, sector_col)
-                if sector:
-                    sectors.add(sector)
+            if group_companies:
+                group_sector = get_largest_ca_company_sector(group_companies, df, company_col, sector_col)
+                if not group_sector:
+                    group_sector = get_group_sector(group_companies, df, company_col, sector_col)
+                entity_sectors[entity] = group_sector
+            else:
+                entity_sectors[entity] = None
         else:
-            sector = get_company_sector(entity, df, company_col, sector_col)
-            if sector:
-                sectors.add(sector)
+            entity_sector = get_company_sector(entity, df, company_col, sector_col)
+            entity_sectors[entity] = entity_sector
     
-    if len(sectors) == 1:
-        return True, list(sectors)[0]
-    elif len(sectors) > 1:
+    representative_sectors = [sector for sector in entity_sectors.values() if sector is not None]
+    
+    if not representative_sectors:
+        return False, None
+    
+    if len(set(representative_sectors)) == 1:
+        return True, representative_sectors[0]
+    elif len(set(representative_sectors)) > 1:
         return False, None
     else:
         return False, None
-
+    
 def get_company_sector(company_name, df, company_col, sector_col):
     if company_name and sector_col and sector_col in df.columns:
         comp_df = safe_find_company(df, company_name, company_col)
@@ -1532,7 +1539,7 @@ elif display_mode == "Groupe d'entreprises":
                         ))
                     fig.add_annotation(
                         text=f"CAGR: {(calculate_cagr(values, n_years)*100):.2f}%",
-                        xref="paper", yref="paper", x=0.5, y=1.15,
+                        xref="paper", yref="paper", x=0.5, y=1.12,
                         showarrow=False,
                         font=dict(size=16, color="black"),
                         bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
