@@ -281,22 +281,24 @@ def plot_sector_evolution(sector_name, df_sector, ca_cols, re_cols, title_suffix
         yaxis="y3",
         marker=dict(size=10, line=dict(width=0))
     ))
-    fig.add_annotation(
-        text=f"CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else "CAGR CA: N/A",
-        xref="paper", yref="paper", x=0.25, y=1.15,
-        showarrow=False,
-        font=dict(size=14, color="blue"),
-        bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
-        borderwidth=1, borderpad=4,
-    )
-    fig.add_annotation(
-        text=f"CAGR RE: {(cagr_re*100):.2f}%" if not pd.isna(cagr_re) else "CAGR RE: N/A",
-        xref="paper", yref="paper", x=0.75, y=1.15,
-        showarrow=False,
-        font=dict(size=14, color="red"),
-        bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
-        borderwidth=1, borderpad=4,
-    )    
+    if pd.notna(cagr_ca):
+        fig.add_annotation(
+            text=f"CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else "CAGR CA: N/A",
+            xref="paper", yref="paper", x=0.25, y=1.15,
+            showarrow=False,
+            font=dict(size=14, color="blue"),
+            bgcolor="rgba(255,255,255,0.8)", bordercolor="blue",
+            borderwidth=1, borderpad=4,
+        )
+    if pd.notna(cagr_re):
+        fig.add_annotation(
+            text=f"CAGR RE: {(cagr_re*100):.2f}%" if not pd.isna(cagr_re) else "CAGR RE: N/A",
+            xref="paper", yref="paper", x=0.75, y=1.15,
+            showarrow=False,
+            font=dict(size=14, color="red"),
+            bgcolor="rgba(255,255,255,0.8)", bordercolor="red",
+            borderwidth=1, borderpad=4,
+        )    
     
     max_ca = merged_df["CA"].max() if merged_df["CA"].max() > 0 else 1
     fig.update_layout(
@@ -376,14 +378,15 @@ if charges_yearly.shape[0] >= 2:
         textfont=dict(size=16),
         marker=dict(size=10, line=dict(width=0))
     ))
-    fig2.add_annotation(
-        text=f"CAGR: {(cagr_charges*100):.2f}%" if not pd.isna(cagr_charges) else "CAGR: N/A",
-        xref="paper", yref="paper", x=0.5, y=1.15,
-        showarrow=False,
-        font=dict(size=16, color="black"),
-        bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
-        borderwidth=1, borderpad=4,
-    )
+    if pd.notna(cagr_charges):
+        fig2.add_annotation(
+            text=f"CAGR: {(cagr_charges*100):.2f}%" if not pd.isna(cagr_charges) else "CAGR: N/A",
+            xref="paper", yref="paper", x=0.5, y=1.15,
+            showarrow=False,
+            font=dict(size=16, color="black"),
+            bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+            borderwidth=1, borderpad=4,
+        )
     fig2.update_layout(
         title=f"ii. Évolution des Charges de personnel pour {selected_sector}",
         yaxis_title="Charges (Dhs)",
@@ -442,17 +445,19 @@ for var_name, cols in marge_variables.items():
         textfont=dict(size=16),
         marker=dict(size=10, line=dict(width=0))
     ))
-    fig.add_annotation(
-        text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
-        xref="paper", yref="paper",
-        x=0.5, y=1.15,
-        showarrow=False,
-        font=dict(size=16, color="black"),
-        bgcolor="rgba(255,255,255,0.8)",
-        bordercolor="black",
-        borderwidth=1,
-        borderpad=4,
-    )
+    if pd.notna(cagr):
+        fig.add_annotation(
+            text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
+            xref="paper", yref="paper",
+            x=0.5, y=1.15,
+            showarrow=False,
+            font=dict(size=16, color="black"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="black",
+            borderwidth=1,
+            borderpad=4,
+        )
+
     fig.update_layout(
         title=f"{label[var_name]}. Évolution de {var_name} pour {selected_sector}",
         yaxis_title=f"{var_name} (%)",
@@ -623,19 +628,20 @@ def plot_multi_metric(multi_sectors, df, years, var_name, cols, yaxis_title, cha
         ))
         cagr_key = f"{var_name}_CAGR" if var_name in ["Chiffre d'affaires", "Resultat d'exploitation", "Charges personnel"] else f"{var_name}_CAGR"
         cagr = cagr_data.get(cagr_key, {}).get(sector, np.nan)
-        annotations.append(dict(
-            text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
-            x=0.27 + i * (0.55 / max(1, bar_count)),
-            y=1.12,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(size=14, color=color),
-            bgcolor="rgba(255,255,255,0.8)",
-            bordercolor=color,
-            borderwidth=1,
-            borderpad=4
-        ))
+        if pd.notna(cagr):
+            annotations.append(dict(
+                text=f"CAGR: {(cagr*100):.2f}%" if not pd.isna(cagr) else "CAGR: N/A",
+                x=0.27 + i * (0.55 / max(1, bar_count)),
+                y=1.12,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=14, color=color),
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor=color,
+                borderwidth=1,
+                borderpad=4
+            ))
     fig.update_layout(
         title=dict(text=chart_title or var_name),
         barmode="group",
@@ -727,20 +733,20 @@ if multi_sectors:
 
         cagr_ca = cagr_data.get("Chiffre d'affaires_CAGR", {}).get(sector, np.nan)
         cagr_marge = cagr_data.get("Marge EBIT/CA_CAGR", {}).get(sector, np.nan)
-        
-        annotations.append(dict(
-            text=f"{sector}<br>CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else f"{sector}<br>CAGR CA: N/A",
-            xref="paper",
-            yref="paper",
-            x=ann_x + i * ann_step,
-            y=1.05,
-            showarrow=False,
-            align="left",
-            bgcolor="rgba(255,255,255,0.5)",
-            bordercolor=ca_color,
-            borderwidth=1,
-            font=dict(size=11)
-        ))
+        if pd.notna(cagr_ca):
+            annotations.append(dict(
+                text=f"{sector}<br>CAGR CA: {(cagr_ca*100):.2f}%" if not pd.isna(cagr_ca) else f"{sector}<br>CAGR CA: N/A",
+                xref="paper",
+                yref="paper",
+                x=ann_x + i * ann_step,
+                y=1.05,
+                showarrow=False,
+                align="left",
+                bgcolor="rgba(255,255,255,0.5)",
+                bordercolor=ca_color,
+                borderwidth=1,
+                font=dict(size=11)
+            ))
     max_ca = max([df[df['Secteur']==s][f"Chiffre d'affaires {y} (Dhs)"].sum() for s in multi_sectors for y in years if len(df[df['Secteur']==s]) > 0]) if multi_sectors else 1
     
     combined_fig.update_layout(
