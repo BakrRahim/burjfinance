@@ -358,11 +358,13 @@ def create_group_from_selection(selected_companies: List[Dict[str, Any]]) -> Dic
     return group_data
 
 def get_company_products_from_group(company_name: str, df_companies, df_kerix):
-    all_deduped = []
-    all_full = []
-    using_activites = False
+    product_dedup = []
+    product_full = []
+    activity_dedup = []
+    activity_full = []
+    has_products = False
+    using_activities = False
     found_in_df = False
-    
     if df_companies is not None and '_display_name' in df_companies.columns:
         company_row = df_companies[df_companies['_display_name'].str.strip() == company_name.strip()]
         if not company_row.empty:
@@ -370,26 +372,36 @@ def get_company_products_from_group(company_name: str, df_companies, df_kerix):
             products_col = get_col(df_companies, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
             products_text = ""
             if products_col and products_col in company_row.columns:
-                products_text = str(company_row.iloc[0][products_col])
-                if products_text.strip() and products_text.strip().lower() != 'nan':
-                    deduped, full = split_tokens(products_text)
-                    all_deduped.extend(deduped)
-                    all_full.extend(full)
-    
-    if not all_deduped and df_kerix is not None and '_display_name' in df_kerix.columns:
+                raw_value = company_row.iloc[0][products_col]
+                if pd.notna(raw_value):
+                    products_text = str(raw_value).strip()
+                    if products_text.lower() in ['nan', 'n/a', 'non disponible', 'nc', '']:
+                        products_text = ""
+            if products_text:
+                deduped, full = split_tokens(products_text)
+                if deduped:
+                    product_dedup = deduped
+                    product_full = full
+                    has_products = True
+    if not has_products and df_kerix is not None and '_display_name' in df_kerix.columns:
         company_row = df_kerix[df_kerix['_display_name'].str.strip() == company_name.strip()]
         if not company_row.empty:
             found_in_df = True
             products_col = get_col(df_kerix, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
             products_text = ""
             if products_col and products_col in company_row.columns:
-                products_text = str(company_row.iloc[0][products_col])
-                if products_text.strip() and products_text.strip().lower() != 'nan':
-                    deduped, full = split_tokens(products_text)
-                    all_deduped.extend(deduped)
-                    all_full.extend(full)
-    
-    if not all_deduped and found_in_df:
+                raw_value = company_row.iloc[0][products_col]
+                if pd.notna(raw_value):
+                    products_text = str(raw_value).strip()
+                    if products_text.lower() in ['nan', 'n/a', 'non disponible', 'nc', '']:
+                        products_text = ""
+            if products_text:
+                deduped, full = split_tokens(products_text)
+                if deduped:
+                    product_dedup = deduped
+                    product_full = full
+                    has_products = True
+    if not has_products and found_in_df:
         for df_temp in [df_companies, df_kerix]:
             if df_temp is not None and '_display_name' in df_temp.columns:
                 company_row = df_temp[df_temp['_display_name'].str.strip() == company_name.strip()]
@@ -401,53 +413,43 @@ def get_company_products_from_group(company_name: str, df_companies, df_kerix):
                             activ_col = ac
                             break
                     if activ_col:
-                        activ_text = str(company_row.iloc[0][activ_col])
-                        if activ_text.strip() and activ_text.strip().lower() != 'nan':
+                        activ_raw = company_row.iloc[0][activ_col]
+                        if pd.notna(activ_raw):
+                            activ_text = str(activ_raw).strip()
+                            if activ_text.lower() in ['nan', 'n/a', 'non disponible', 'nc', '']:
+                                activ_text = ""
+                        if activ_text:
                             deduped, full = split_activites(activ_text)
-                            all_deduped.extend(deduped)
-                            all_full.extend(full)
-                            using_activites = True
-                            break
-    
-    if not all_deduped and found_in_df:
-        for df_temp in [df_companies, df_kerix]:
-            if df_temp is not None and '_display_name' in df_temp.columns:
-                company_row = df_temp[df_temp['_display_name'].str.strip() == company_name.strip()]
-                if not company_row.empty and '_sector' in company_row.columns:
-                    sector_text = str(company_row.iloc[0]['_sector'])
-                    if sector_text.strip() and sector_text.strip().lower() != 'nan':
-                        deduped, full = split_activites(sector_text)
-                        all_deduped.extend(deduped)
-                        all_full.extend(full)
-                        using_activites = True
-    
-    all_deduped = [token for token in all_deduped if token and str(token).strip() and str(token).strip().lower() != 'nan']
-    all_full = [token for token in all_full if token and str(token).strip() and str(token).strip().lower() != 'nan']
-    
-    return list(set(all_deduped)), all_full, using_activites
+                            if deduped:
+                                activity_dedup = deduped
+                                activity_full = full
+                                using_activities = True
+                                break
+    return product_dedup, product_full, activity_dedup, activity_full, has_products, using_activities
 
 def get_group_products(group_manager, group_name: str, df_companies, df_kerix):
     if group_name not in group_manager.groups:
-        return [], [], False
+        return [], [], [], [], 0, False
     group_data = group_manager.groups[group_name]
     group_companies = group_data.get('companies', [])
-    all_deduped = []
-    all_full = []
-    any_activites_used = False
-    
+    product_set = set()
+    product_full_list = []
+    activity_set = set()
+    activity_full_list = []
+    num_with_products = 0
+    any_activities_used = False
     for company in group_companies:
         if isinstance(company, str) and company.strip():
-            company_deduped, company_full, used_activites = get_company_products_from_group(company.strip(), df_companies, df_kerix)
-            all_deduped.extend(company_deduped)
-            all_full.extend(company_full)
-            if used_activites:
-                any_activites_used = True
-    
-    all_deduped = [token for token in all_deduped if token and str(token).strip() and str(token).strip().lower() != 'nan']
-    all_full = [token for token in all_full if token and str(token).strip() and str(token).strip().lower() != 'nan']
-    
-    group_deduped = list(set(all_deduped))
-    return group_deduped, all_full, any_activites_used
+            p_dedup, p_full, a_dedup, a_full, has_p, used_a = get_company_products_from_group(company.strip(), df_companies, df_kerix)
+            if has_p:
+                product_set.update(p_dedup)
+                product_full_list.extend(p_full)
+                num_with_products += 1
+            else:
+                activity_set.update(a_dedup)
+                activity_full_list.extend(a_full)
+                any_activities_used = True
+    return list(product_set), product_full_list, list(activity_set), activity_full_list, num_with_products, any_activities_used
 
 df_companies = load_or_upload("companies.xlsx", "companies.xlsx")
 df_kerix = load_or_upload("kerix.xlsx", "kerix.xlsx")
@@ -1155,11 +1157,21 @@ elif search_mode == "Groupe d'entreprises":
                 "_display_name": group_data.get('display_name', group_data.get('name', selected_group))
             })
             seed_name_for_exclusion = group_data.get('display_name', group_data.get('name', selected_group))            
-            group_deduped, group_full, any_activites_used = get_group_products(group_manager, selected_group, df_companies_prepared, df_kerix_prepared)
-            seed_prods_dedup = group_deduped
-            seed_prods_full = group_full
-            using_activites = any_activites_used
-            st.session_state.using_activites_for_comparison = using_activites
+            group_product_dedup, group_product_full, group_activity_dedup, group_activity_full, num_with_products, any_activites_used = get_group_products(group_manager, selected_group, df_companies_prepared, df_kerix_prepared)
+            total_companies = len(group_data.get('companies', []))
+            all_have_products = total_companies > 0 and num_with_products == total_companies
+            all_lack_products = num_with_products == 0
+            mixed = total_companies > 0 and not all_have_products and not all_lack_products
+            st.session_state.group_all_have_products = all_have_products
+            st.session_state.group_all_lack_products = all_lack_products
+            st.session_state.group_mixed = mixed
+            st.session_state.group_product_dedup = group_product_dedup
+            st.session_state.group_product_full = group_product_full
+            st.session_state.group_activity_dedup = group_activity_dedup
+            st.session_state.group_activity_full = group_activity_full
+            st.session_state.group_num_with_products = num_with_products
+            st.session_state.group_total_companies = total_companies
+            st.session_state.using_activites_for_comparison = any_activites_used
 
 st.subheader("Filtres")
 use_ca_filter = st.checkbox("Activer filtre CA (Chiffre d'affaires)", value=False)
@@ -1256,6 +1268,43 @@ if seed_row is None:
     st.stop()
 
 st.subheader("B. Algorithme Concurrentiel")
+st.markdown("#### Seed utilisée")
+with st.expander("Détails Seed", expanded=False):
+    if search_mode == "Entreprise unique":
+        using_activ = st.session_state.get('using_activites_for_comparison', False)
+        term = "Activités" if using_activ else "Produits/Services"
+        tokens_key = "seed_activities_without_duplicates" if using_activ else "seed_products_without_duplicates"
+        full_key = "seed_activities_with_duplicates" if using_activ else "seed_products_with_duplicates"
+        st.write({
+            "seed_name": seed_name_for_exclusion,
+            tokens_key: seed_prods_dedup,
+            full_key: seed_prods_full,
+            "count_unique": len(seed_prods_dedup),
+            "full_count": len(seed_prods_full)
+        })
+    else:
+        total = st.session_state.get('group_total_companies', 0)
+        num_p = st.session_state.get('group_num_with_products', 0)
+        st.write(f"Nombre d'entreprises avec produits/services: {num_p}/{total}")
+        if st.session_state.get('group_all_have_products', False):
+            st.write("Cas: Toutes les entreprises ont produits/services")
+            st.write(f"Tokens produits uniques: {len(st.session_state.group_product_dedup)}")
+            st.write(f"Tokens produits complets: {len(st.session_state.group_product_full)}")
+            st.json({"product_tokens_unique": st.session_state.group_product_dedup})
+        elif st.session_state.get('group_all_lack_products', False):
+            st.write("Cas: Aucune entreprise n'a produits/services (uniquement activités)")
+            st.write(f"Tokens activités uniques: {len(st.session_state.group_activity_dedup)}")
+            st.write(f"Tokens activités complets: {len(st.session_state.group_activity_full)}")
+            st.json({"activity_tokens_unique": st.session_state.group_activity_dedup})
+        else:
+            st.write("Cas: Mixte (produits pour celles qui en ont, activités pour les autres)")
+            st.write(f"Tokens produits uniques (de {num_p} entreprises): {len(st.session_state.group_product_dedup)}")
+            st.write(f"Tokens activités uniques (de {total - num_p} entreprises): {len(st.session_state.group_activity_dedup)}")
+            st.json({
+                "product_tokens_unique": st.session_state.group_product_dedup,
+                "activity_tokens_unique": st.session_state.group_activity_dedup
+            })
+    
 tabs = st.tabs(["Base totale", "Kerix", "Paramètres"])
 
 with tabs[2]:
@@ -1268,36 +1317,28 @@ with tabs[2]:
 def compute_matches_for_df(df, label):
     if df is None:
         return None, None
-    
     if seed_row is None and seed_name_for_exclusion is None:
         return pd.DataFrame(), []
-    
     candidates = df.copy().reset_index(drop=True)
-    
     all_grouped_companies = set()
     for group_data in group_manager.groups.values():
         for company in group_data.get('companies', []):
             if isinstance(company, str) and company.strip():
                 all_grouped_companies.add(company.strip())
-    
     if '_display_name' in candidates.columns:
         candidates = candidates[~candidates['_display_name'].isin(all_grouped_companies)].reset_index(drop=True)
-    
     mask_city = candidates['_city'].isin(selected_cities) if selected_cities else pd.Series([True] * len(candidates))
     mask_sector = candidates['_sector'].isin(selected_sectors) if selected_sectors else pd.Series([True] * len(candidates))
-    
     if use_ca_filter:
         sel_min = float(ca_min_sel)
         sel_max = float(ca_max_sel)
         has_ca_data = (candidates['_revenue_min'].notna()) | (candidates['_revenue_max'].notna())
         ca_overlap = (
-            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].notna()) & 
+            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].notna()) &
             (candidates['_revenue_max'] >= sel_min) & (candidates['_revenue_min'] <= sel_max)) |
-            
-            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].isna()) & 
+            ((candidates['_revenue_min'].notna()) & (candidates['_revenue_max'].isna()) &
             (candidates['_revenue_min'] <= sel_max)) |
-            
-            ((candidates['_revenue_max'].notna()) & (candidates['_revenue_min'].isna()) & 
+            ((candidates['_revenue_max'].notna()) & (candidates['_revenue_min'].isna()) &
             (candidates['_revenue_max'] >= sel_min))
         )
         mask_revenue_overlap = has_ca_data & ca_overlap
@@ -1312,143 +1353,173 @@ def compute_matches_for_df(df, label):
             candidates = candidates[candidates['_display_name'].astype(str) != str(seed_name_for_exclusion)]
     except Exception:
         pass
-    
     candidates = candidates.reset_index(drop=True)
     if candidates.shape[0] == 0:
         return candidates, []
-    
-    using_activites = st.session_state.get('using_activites_for_comparison', False)
-    seed_prods_dedup = []
-    seed_prods_full = []
-    if seed_row is not None:
-        if search_mode == "Entreprise unique":
-            seed_prods_dedup, seed_prods_full = extract_seed_tokens(seed_row)
-        elif search_mode == "Groupe d'entreprises" and seed_name_for_exclusion:
-            try:
-                group_data = group_manager.groups.get(seed_name_for_exclusion, {})
-                if group_data and 'companies' in group_data:
-                    all_deduped = []
-                    all_full = []
-                    any_activites_used = False
-                    for company_name in group_data['companies']:
-                        if isinstance(company_name, str) and company_name.strip():
-                            company_deduped, company_full, used_activites = get_company_products_from_group(company_name.strip(), df_companies_prepared, df_kerix_prepared)
-                            all_deduped.extend(company_deduped)
-                            all_full.extend(company_full)
-                            if used_activites:
-                                any_activites_used = True
-                    seed_prods_dedup = list(set(all_deduped))
-                    seed_prods_full = all_full
-                    using_activites = any_activites_used
-                    st.session_state.using_activites_for_comparison = using_activites
-                else:
-                    seed_prods_dedup, seed_prods_full = [], []
-            except Exception:
-                seed_prods_dedup, seed_prods_full = [], []
+    is_group = st.session_state.get('current_search_target') == 'group'
+    products_col = get_col(candidates, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"])
+    activ_candidates = ["Activités Principales", "Activités principales", "Activité principale", "Activité principale ", "Activités"]
+    activ_col = get_col(candidates, activ_candidates)
+    show_product = False
+    show_activity = False
+    using_activites = False
+    has_product_match = False
+    has_activity_match = False
+    all_have = False
+    all_lack = False
+    mixed = False
+    if is_group:
+        all_have = st.session_state.get('group_all_have_products', False)
+        all_lack = st.session_state.get('group_all_lack_products', False)
+        mixed = st.session_state.get('group_mixed', False)
+        show_product = all_have or mixed
+        show_activity = all_lack or mixed
+        using_activites = all_lack or mixed
+        group_p_dedup = st.session_state.get('group_product_dedup', [])
+        group_a_dedup = st.session_state.get('group_activity_dedup', [])
+        group_p_full = st.session_state.get('group_product_full', [])
+        group_a_full = st.session_state.get('group_activity_full', [])
+        has_product_match = bool(group_p_dedup)
+        has_activity_match = bool(group_a_dedup)
     else:
-        if seed_prods is not None:
-            temp_dedup, temp_full = split_tokens(" ".join(seed_prods))
-            seed_prods_dedup = temp_dedup
-            seed_prods_full = temp_full
-    
-    if not seed_prods_dedup and not seed_prods_full:
-        return pd.DataFrame(), []
-    
-    activ_col = get_col(candidates, ["Activités Principales", "Activités principales", "Activité principale", "Activité principale ", "Activités"])
-    
-    prefix = "activity" if using_activites else "product"
-    frac_col = f"{prefix}_fraction_str"
-    common_col = f"{prefix}s_common_count"
-    seed_col = f"{prefix}s_seed_count"
-    comment_col = f"{prefix}_comment"
-    dup_prefix = "duplicate" if not using_activites else "activity_dup"
-    dup_frac_col = f"{dup_prefix}_fraction_str"
-    
-    matches = []
-    duplicate_matches = []
-    comments = []
-    
-    for _, r in candidates.iterrows():
-        if using_activites:
-            cand_dedup, cand_full = [], []
-            if activ_col and pd.notna(r.get(activ_col)):
-                cand_dedup, cand_full = split_activites(str(r[activ_col]))
-            if not cand_dedup and '_sector' in r.index:
-                cand_dedup, cand_full = split_activites(str(r['_sector']))
-        else:
-            raw_cand_products = r.get(get_col(candidates, ["Produits / Services", "Produits/Services", "Produits / Services ", "products", "Produits"]), "")
-            cand_dedup, cand_full = split_tokens(str(raw_cand_products))
-            if not cand_dedup and activ_col:
-                activ_text = str(r.get(activ_col, ''))
-                if pd.notna(activ_text) and str(activ_text).strip():
-                    cand_dedup, cand_full = split_activites(activ_text)
-        
-        mp, _ = count_similar(seed_prods_dedup, cand_dedup, prod_threshold)
-        matches.append((mp, len(seed_prods_dedup)))
-        
-        if using_activites:
-            mp_dup, _ = count_similar(seed_prods_full, cand_full, prod_threshold)
-            duplicate_matches.append((mp_dup, len(seed_prods_full)))
-        else:
-            mp_dup, _ = count_similar(seed_prods_full, cand_full, prod_threshold)
-            duplicate_matches.append((mp_dup, len(seed_prods_full)))
-        
-        duplicate_tokens_found = []
-        for s_token in set(seed_prods_full):
-            for c_token in cand_full:
-                if fuzzy_ratio(s_token, c_token) >= prod_threshold:
-                    duplicate_tokens_found.append(c_token)
-                    break
-        
-        term = "Activités" if using_activites else "Produits"
-        if duplicate_tokens_found:
-            if len(duplicate_tokens_found) == 1:
-                comment = f"Forte Concentration en: {duplicate_tokens_found[0]} ({term})"
-            elif len(duplicate_tokens_found) <= 3:
-                comment = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found))} ({term})"
-            else:
-                comment = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found[:3]))} +{len(duplicate_tokens_found)-3} autres ({term})"
-        else:
-            comment = f"{mp_dup}/{len(seed_prods_full)} similaires ({term})"
-        
-        comments.append(comment)
-    
-    candidates[common_col] = [m for m, t in matches]
-    candidates[seed_col] = [t for m, t in matches]
-    candidates[f"{prefix}_fraction"] = candidates.apply(lambda r: (r[common_col] / max(1, r[seed_col])) if r[seed_col] > 0 else 0.0, axis=1)
-    candidates[f"{prefix}_fraction_str"] = candidates.apply(lambda r: frac_str(r[common_col], r[seed_col]), axis=1)
-    candidates[f"{dup_prefix}_count"] = [m for m, t in duplicate_matches]
-    candidates[f"{dup_prefix}_seed_count"] = [t for m, t in duplicate_matches]
-    candidates[f"{dup_prefix}_fraction_str"] = candidates.apply(
-        lambda r: frac_str(r[f"{dup_prefix}_count"], r[f"{dup_prefix}_seed_count"]), axis=1
-    )
-    candidates[comment_col] = comments
-    if using_activites:
-        sort_col = 'activity_fraction'
-    else:
-        sort_col = 'product_fraction'
-    candidates = candidates.sort_values(by=sort_col, ascending=False).reset_index(drop=True)
-    
-    display_cols = []
-    if '_display_name' in candidates.columns:
-        display_cols.append('_display_name')
-    match_col_str = f"{prefix}_fraction_str"
-    display_cols.append(match_col_str)
+        seed_prods_dedup, seed_prods_full = extract_seed_tokens(seed_row)
+        using_activites = st.session_state.get('using_activites_for_comparison', False)
+        show_product = not using_activites
+        show_activity = using_activites
+        seed_prods_dedup = seed_prods_dedup if show_product else seed_prods_dedup
+        seed_prods_full = seed_prods_full
+        has_product_match = bool(seed_prods_dedup) and show_product
+        has_activity_match = bool(seed_prods_dedup) and show_activity
     candidates['_CA_display'] = candidates.apply(lambda r: format_range_compact(r['_revenue_min'], r['_revenue_max']), axis=1)
-    display_cols.append('_CA_display')
     candidates['_OP_display'] = candidates['_operating_income'].apply(lambda x: compact_num(x))
-    display_cols.append('_OP_display')
     candidates['_City_display'] = candidates['_city']
-    display_cols.append('_City_display')
     candidates['_Sector_display'] = candidates['_sector']
-    display_cols.append('_Sector_display')
     if 'selected_years' in (info_companies if label == "Base totale" else info_kerix):
         years_str = ', '.join(map(str, selected_years))
         candidates['_Year_display'] = f"Données {years_str}"
+    display_cols = ['_display_name']
+    if has_product_match:
+        display_cols.insert(1, 'product_fraction_str')
+    if has_activity_match and not has_product_match:
+        display_cols.insert(1, 'activity_fraction_str')
+    if has_product_match and has_activity_match:
+        display_cols.insert(1, 'product_fraction_str')
+        display_cols.insert(2, 'activity_fraction_str')
+    display_cols += ['_CA_display', '_OP_display', '_City_display', '_Sector_display']
+    if '_Year_display' in candidates.columns:
         display_cols.append('_Year_display')
-    display_cols += [f"{dup_prefix}_fraction_str", comment_col]
-    
-    return candidates, display_cols, using_activites
+        for idx, r in candidates.iterrows():
+            cand_p_dedup = []
+            cand_p_full = []
+            cand_a_dedup = []
+            cand_a_full = []
+            if products_col and pd.notna(r.get(products_col)):
+                raw_prod = str(r[products_col])
+                if raw_prod.strip():
+                    cand_p_dedup, cand_p_full = split_tokens(raw_prod)
+            if activ_col and pd.notna(r.get(activ_col)):
+                raw_activ = str(r[activ_col])
+                if raw_activ.strip():
+                    cand_a_dedup, cand_a_full = split_activites(raw_activ)
+            if show_product:
+                if is_group:
+                    seed_p_dedup = group_p_dedup
+                    seed_p_full_for_dup = group_p_full
+                else:
+                    seed_p_dedup = seed_prods_dedup
+                    seed_p_full_for_dup = seed_prods_full
+                mp_p, sp_p = count_similar(seed_p_dedup, cand_p_dedup, prod_threshold)
+                candidates.at[idx, 'product_common_count'] = mp_p
+                candidates.at[idx, 'product_seed_count'] = sp_p
+                candidates.at[idx, 'product_fraction'] = mp_p / max(1, sp_p) if sp_p > 0 else 0.0
+                candidates.at[idx, 'product_fraction_str'] = frac_str(mp_p, sp_p)
+                mp_dup_p, _= count_similar(seed_p_full_for_dup, cand_p_full, prod_threshold)
+                candidates.at[idx, 'product_dup_count'] = mp_dup_p
+                candidates.at[idx, 'product_dup_seed_count'] = len(seed_p_full_for_dup)
+                candidates.at[idx, 'product_dup_fraction_str'] = frac_str(mp_dup_p, len(seed_p_full_for_dup))
+                duplicate_tokens_found_p = []
+                for s_token in set(seed_p_full_for_dup):
+                    for c_token in cand_p_full:
+                        if fuzzy_ratio(s_token, c_token) >= prod_threshold:
+                            duplicate_tokens_found_p.append(c_token)
+                            break
+                term_p = "Produits/Services"
+                if duplicate_tokens_found_p:
+                    if len(duplicate_tokens_found_p) == 1:
+                        comment_p = f"Forte Concentration en: {duplicate_tokens_found_p[0]} ({term_p})"
+                    elif len(duplicate_tokens_found_p) <= 3:
+                        comment_p = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found_p))} ({term_p})"
+                    else:
+                        comment_p = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found_p[:3]))} +{len(duplicate_tokens_found_p)-3} autres ({term_p})"
+                else:
+                    comment_p = f"{mp_dup_p}/{len(seed_p_full_for_dup)} similaires ({term_p})"
+                candidates.at[idx, 'product_comment'] = comment_p
+
+            if show_activity:
+                if is_group:
+                    seed_a_dedup = group_a_dedup
+                    seed_a_full_for_dup = group_a_full
+                else:
+                    seed_a_dedup = seed_prods_dedup
+                    seed_a_full_for_dup = seed_prods_full
+                mp_a, sp_a = count_similar(seed_a_dedup, cand_a_dedup, prod_threshold)
+                candidates.at[idx, 'activity_common_count'] = mp_a
+                candidates.at[idx, 'activity_seed_count'] = sp_a
+                candidates.at[idx, 'activity_fraction'] = mp_a / max(1, sp_a) if sp_a > 0 else 0.0
+                candidates.at[idx, 'activity_fraction_str'] = frac_str(mp_a, sp_a)
+                mp_dup_a, _= count_similar(seed_a_full_for_dup, cand_a_full, prod_threshold)
+                candidates.at[idx, 'activity_dup_count'] = mp_dup_a
+                candidates.at[idx, 'activity_dup_seed_count'] = len(seed_a_full_for_dup)
+                candidates.at[idx, 'activity_dup_fraction_str'] = frac_str(mp_dup_a, len(seed_a_full_for_dup))
+                duplicate_tokens_found_a = []
+                for s_token in set(seed_a_full_for_dup):
+                    for c_token in cand_a_full:
+                        if fuzzy_ratio(s_token, c_token) >= prod_threshold:
+                            duplicate_tokens_found_a.append(c_token)
+                            break
+                term_a = "Activités"
+                if duplicate_tokens_found_a:
+                    if len(duplicate_tokens_found_a) == 1:
+                        comment_a = f"Forte Concentration en: {duplicate_tokens_found_a[0]} ({term_a})"
+                    elif len(duplicate_tokens_found_a) <= 3:
+                        comment_a = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found_a))} ({term_a})"
+                    else:
+                        comment_a = f"Forte Concentration en: {', '.join(sorted(duplicate_tokens_found_a[:3]))} +{len(duplicate_tokens_found_a)-3} autres ({term_a})"
+                else:
+                    comment_a = f"{mp_dup_a}/{len(seed_a_full_for_dup)} similaires ({term_a})"
+                candidates.at[idx, 'activity_comment'] = comment_a
+
+        if is_group and mixed:
+            total_seed_matched = candidates['product_common_count'] + candidates['activity_common_count']
+            total_seed_count = candidates['product_seed_count'] + candidates['activity_seed_count']
+            candidates['combined_fraction'] = (candidates['product_fraction'].fillna(0) + candidates['activity_fraction'].fillna(0)) / 2
+            candidates['combined_fraction_str'] = total_seed_matched.astype(int).astype(str) + '/' + total_seed_count.astype(int).astype(str) + ' (' + candidates['combined_fraction'].round(2).astype(str) + ')'
+            if 'product_fraction_str' in display_cols:
+                display_cols.remove('product_fraction_str')
+            if 'activity_fraction_str' in display_cols:
+                display_cols.remove('activity_fraction_str')
+            display_cols.insert(1, 'combined_fraction_str')
+
+        if show_product and has_product_match and 'product_dup_fraction_str' not in display_cols:
+            display_cols += ['product_dup_fraction_str', 'product_comment']
+        if show_activity and has_activity_match and (mixed or all_lack) and (not mixed):
+            display_cols += ['activity_dup_fraction_str', 'activity_comment']
+
+        if is_group:
+            if all_have:
+                candidates = candidates.sort_values(by='product_fraction', ascending=False).reset_index(drop=True)
+            elif all_lack:
+                candidates = candidates.sort_values(by='activity_fraction', ascending=False).reset_index(drop=True)
+            elif mixed:
+                candidates['avg_fraction'] = (candidates['product_fraction'].fillna(0) + candidates['activity_fraction'].fillna(0)) / 2
+                candidates = candidates.sort_values(by='avg_fraction', ascending=False).reset_index(drop=True)
+                candidates = candidates.drop('avg_fraction', axis=1)
+        else:
+            sort_col = 'activity_fraction' if using_activites else 'product_fraction'
+            candidates = candidates.sort_values(by=sort_col, ascending=False).reset_index(drop=True)
+        if is_group and (mixed or all_have or all_lack):
+            display_cols = list(dict.fromkeys(display_cols))
+        return candidates, display_cols, (using_activites or mixed if is_group else using_activites)
 
 out = None
 with tabs[0]:
@@ -1457,102 +1528,133 @@ with tabs[0]:
         st.warning("Fichier companies.xlsx non chargé.")
     else:
         candidates, display_cols, using_activites = compute_matches_for_df(df_companies_prepared, "Base totale")
-        term = "Activités" if using_activites else "Produits"
-        if using_activites:
-            st.info("Seed n’a pas de produits/services, comparaison par activités principales.")
-        
-        st.markdown("#### Seed utilisée")
-        with st.expander(f"Info Seed ({term})", expanded=False):
-            seed_tokens_key = "seed_activities_without_duplicates" if using_activites else "seed_products_without_duplicates"
-            seed_full_key = "seed_activities_with_duplicates" if using_activites else "seed_products_with_duplicates"
-            st.write({
-                "seed_name": seed_name_for_exclusion, 
-                seed_tokens_key: seed_prods_dedup, 
-                seed_full_key: seed_prods_full,
-                "count_unique": len(seed_prods_dedup),
-                "full_count": len(seed_prods_full)
-            })
-        
+        is_group = st.session_state.get('current_search_target') == 'group'
+        all_have = st.session_state.get('group_all_have_products', False)
+        all_lack = st.session_state.get('group_all_lack_products', False)
+        mixed = st.session_state.get('group_mixed', False)
+        if is_group:
+            if all_have:
+                term = "Produits/Services"
+                match_col = 'product_fraction_str'
+                dup_col = 'product_dup_fraction_str'
+                comment_col = 'product_comment'
+                sort_note = "Trié par similarité produits"
+            elif all_lack:
+                term = "Activités"
+                match_col = 'activity_fraction_str'
+                dup_col = 'activity_dup_fraction_str'
+                comment_col = 'activity_comment'
+                sort_note = "Trié par similarité activités"
+            else:
+                term = "Produits/Services et Activités (moyenne)"
+                match_col = None
+                sort_note = "Trié par moyenne des similarités"
+            st.info(f"Recherche groupe: {sort_note}")
+        else:
+            term = "Activités" if using_activites else "Produits/Services"
+            match_col = 'activity_fraction_str' if using_activites else 'product_fraction_str'
+            dup_col = 'activity_dup_fraction_str' if using_activites else 'product_dup_fraction_str'
+            comment_col = 'activity_comment' if using_activites else 'product_comment'
+            sort_note = None
         if candidates is None or candidates.shape[0] == 0:
             st.info(f"Aucun candidat trouvé dans la Base totale pour les options sélectionnés ({term}).")
         else:
             st.markdown(f"##### Top {int(top_n_preview)} candidats - Base totale ({term})")
-            match_col_str = 'activity_fraction_str' if using_activites else 'product_fraction_str'
-            comment_col = 'activity_comment' if using_activites else 'product_comment'
-            dup_col = 'activity_dup_fraction_str' if using_activites else 'duplicate_fraction_str'
             rename_map = {
                 '_display_name': 'Raison Sociale',
-                match_col_str: f'Matching Score ({term})',
                 '_CA_display': "Chiffre d'affaires",
                 '_OP_display': "Résultat d'exploitation",
                 '_City_display': "Ville",
                 '_Sector_display': "Secteur",
-                dup_col: f'Matching Score (avec doublons)' if not using_activites else f'Matching Score ({term} complet)',
-                comment_col: f'Commentaire {term}',
             }
+            if is_group and mixed:
+                rename_map['combined_fraction_str'] = 'Matching Score Total (Produits/Services + Activités)'
+                rename_map['product_dup_fraction_str'] = 'Détail doublons Produits/Services'
+                rename_map['product_comment'] = 'Commentaire Produits/Services'
+            else:
+                if match_col in candidates.columns:
+                    rename_map[match_col] = f'Matching Score ({term})'
+                if dup_col in candidates.columns:
+                    dup_label = f'Matching Score (avec doublons)' if not using_activites else f'Matching Score ({term} complet)'
+                    rename_map[dup_col] = dup_label
+                if comment_col in candidates.columns:
+                    rename_map[comment_col] = f'Commentaire {term}'
             if '_Year_display' in display_cols:
                 rename_map['_Year_display'] = "Année(s) des données"
             df_to_show = candidates.head(int(top_n_preview))[display_cols].fillna("")
             st.dataframe(df_to_show.rename(columns=rename_map))
-            
             out = io.BytesIO()
             with pd.ExcelWriter(out, engine="openpyxl") as writer:
                 df_to_show.rename(columns=rename_map).to_excel(writer, sheet_name="base_totale_results", index=False)
             out.seek(0)
-            dl_filename = "base_totale_results_activites.xlsx" if using_activites else "base_totale_results.xlsx"
+            dl_filename = "base_totale_results.xlsx" if not all_lack else "base_totale_results_activites.xlsx"
+            if mixed:
+                dl_filename = "base_totale_results_mixed.xlsx"
             st.download_button(f"📥 Télécharger résultats (Base totale - {term})", data=out, file_name=dl_filename, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with tabs[1]:
-    if out is not None and candidates is not None and candidates.shape[0] > 0:
-        with pd.ExcelWriter(out, engine="openpyxl") as writer:
-            candidates.to_excel(writer, sheet_name="base_totale_results", index=False)
     st.markdown("### Onglet: Kerix")
     if df_kerix_prepared is None:
         st.warning("Fichier kerix.xlsx non chargé.")
     else:
         candidates_k, display_cols_k, using_activites_k = compute_matches_for_df(df_kerix_prepared, "Kerix")
-        term = "Activités" if using_activites_k else "Produits"
-        st.markdown("#### Seed utilisée")
-        with st.expander("Info Seed", expanded=False):
-            st.write({
-                "seed_name": seed_name_for_exclusion,
-                "seed_products_without_duplicates": seed_prods_dedup,
-                "seed_products_with_duplicates": seed_prods_full,
-                "count_without_duplicates": len(seed_prods_dedup),
-                "full_count": len(seed_prods_full)
-        })
-        if candidates_k is None or candidates_k.shape[0] == 0:
-            st.info("Aucun candidat trouvé dans Kerix pour les options sélectionnés.")
-        else:
-            st.markdown(f"##### Top {int(top_n_preview)} candidats - Kerix")
-            
-            if using_activites_k:
-                match_col = 'activity_fraction_str'
-                comment_col = 'activity_comment'
-                dup_col = 'activity_dup_fraction_str'
+        is_group_k = st.session_state.get('current_search_target') == 'group'
+        all_have_k = st.session_state.get('group_all_have_products', False)
+        all_lack_k = st.session_state.get('group_all_lack_products', False)
+        mixed_k = st.session_state.get('group_mixed', False)
+        if is_group_k:
+            if all_have_k:
+                term_k = "Produits/Services"
+                match_col_k = 'product_fraction_str'
+                dup_col_k = 'product_dup_fraction_str'
+                comment_col_k = 'product_comment'
+            elif all_lack_k:
+                term_k = "Activités"
+                match_col_k = 'activity_fraction_str'
+                dup_col_k = 'activity_dup_fraction_str'
+                comment_col_k = 'activity_comment'
             else:
-                match_col = 'product_fraction_str'
-                comment_col = 'product_comment'
-                dup_col = 'duplicate_fraction_str'
-            
-            rename_map = {
+                term_k = "Produits/Services et Activités (moyenne)"
+                match_col_k = None
+            st.info(f"Recherche groupe: Trié par moyenne des similarités" if mixed_k else f"Trié par similarité {term_k.lower()}")
+        else:
+            term_k = "Activités" if using_activites_k else "Produits/Services"
+            match_col_k = 'activity_fraction_str' if using_activites_k else 'product_fraction_str'
+            dup_col_k = 'activity_dup_fraction_str' if using_activites_k else 'product_dup_fraction_str'
+            comment_col_k = 'activity_comment' if using_activites_k else 'product_comment'
+        if candidates_k is None or candidates_k.shape[0] == 0:
+            st.info(f"Aucun candidat trouvé dans Kerix pour les options sélectionnés ({term_k}).")
+        else:
+            st.markdown(f"##### Top {int(top_n_preview)} candidats - Kerix ({term_k})")
+            rename_map_k = {
                 '_display_name': 'Raison Sociale',
-                match_col: f'Matching Score ({term})',
                 '_CA_display': "Chiffre d'affaires",
                 '_OP_display': "Résultat d'exploitation",
                 '_City_display': "Ville",
                 '_Sector_display': "Secteur",
-                dup_col: f'Matching Score (avec doublons)' if not using_activites_k else f'Matching Score ({term} complet)',
-                comment_col: f'Commentaire {term}',
             }
+            if is_group_k and mixed_k:
+                rename_map_k['combined_fraction_str'] = 'Matching Score Total (Produits/Services + Activités)'
+                rename_map_k['product_dup_fraction_str'] = 'Détail doublons Produits/Services'
+                rename_map_k['product_comment'] = 'Commentaire Produits/Services'
+            else:
+                if match_col_k in candidates_k.columns:
+                    rename_map_k[match_col_k] = f'Matching Score ({term_k})'
+                if dup_col_k in candidates_k.columns:
+                    dup_label_k = f'Matching Score (avec doublons)' if not using_activites_k else f'Matching Score ({term_k} complet)'
+                    rename_map_k[dup_col_k] = dup_label_k
+                if comment_col_k in candidates_k.columns:
+                    rename_map_k[comment_col_k] = f'Commentaire {term_k}'
             if '_Year_display' in display_cols_k:
-                rename_map['_Year_display'] = "Année(s) des données"
-            
-            st.dataframe(candidates_k.head(int(top_n_preview))[display_cols_k].fillna("").rename(columns=rename_map))
+                rename_map_k['_Year_display'] = "Année(s) des données"
+            st.dataframe(candidates_k.head(int(top_n_preview))[display_cols_k].fillna("").rename(columns=rename_map_k))
             out_k = io.BytesIO()
             with pd.ExcelWriter(out_k, engine="openpyxl") as writer:
                 candidates_k.to_excel(writer, sheet_name="kerix_results", index=False)
             out_k.seek(0)
-            st.download_button("📥 Télécharger résultats (Kerix)", data=out_k, file_name="kerix_results.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            dl_filename_k = "kerix_results.xlsx" if not all_lack_k else "kerix_results_activites.xlsx"
+            if mixed_k:
+                dl_filename_k = "kerix_results_mixed.xlsx"
+            st.download_button(f"📥 Télécharger résultats (Kerix - {term_k})", data=out_k, file_name=dl_filename_k, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 group_manager.save_session()
